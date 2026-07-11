@@ -6,15 +6,16 @@ def check_feasibility(distances, direct_distance, consider_total_distance = True
 
 def calculate_feasibility(distances, direct_distance, consider_total_distance = True):
     total_distance = np.sum(distances)
-    delta_distance = 0.0
 
     remaining_distance = total_distance - distances
-    delta = max(distances - direct_distance - remaining_distance)
+    # np.max (not builtin max) to reliably reduce to a scalar regardless of
+    # the input array's shape
+    delta = float(np.max(distances - direct_distance - remaining_distance))
 
     if consider_total_distance:
-        delta = max(delta, direct_distance - total_distance)
+        delta = max(delta, float(np.max(direct_distance - total_distance)))
 
-    return float(max(delta, 0))
+    return float(max(delta, 0.0))
 
 class DiscretizationSolver:
     def solve(self, problem, locations):

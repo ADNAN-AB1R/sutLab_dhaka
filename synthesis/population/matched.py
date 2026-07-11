@@ -157,7 +157,7 @@ def parallel_statistical_matching(context, df_source, source_identifier, weight,
             "target_identifier": target_identifier, "columns": columns,
             "minimum_observations": minimum_observations
         }) as parallel:
-                random_seeds = random.randint(10000, size = len(chunks))
+                random_seeds = [int(s) for s in random.randint(10000, size = len(chunks))]
                 results = parallel.map(_run_parallel_statistical_matching, zip(chunks, random_seeds))
 
                 levels = np.hstack([r[1] for r in results])

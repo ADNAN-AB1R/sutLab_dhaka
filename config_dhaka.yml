@@ -1,0 +1,117 @@
+## Synthetic population pipeline for Dhaka
+## based on the synpp package
+
+# This is the path to a directory where the pipeline can store temporary data
+working_directory: cache
+
+# This section defines which parts of the pipeline should be run
+run:
+  - synthesis.output
+
+  # Not yet wired up for Dhaka (needs a MATSim road network built from the OSM
+  # .pbf extracts under raw_data/Dhaka/osm/, and there is no GTFS feed yet):
+  # - matsim.output
+
+
+# Here the configuration of the pipeline starts
+config:
+  # Some general configuration
+  processes: 8
+
+  # Define whether to use ENTD or EGT as the household travel survey (HTS)
+  hts: entd
+
+  # Define sampling rate and random seed for the output population
+  sampling_rate: 0.01
+  random_seed: 1234
+
+  # Paths to the input data and where the output should be stored (relative
+  # to the repo root, since that's where we invoke `python -m synpp ...` from)
+  data_path: raw_data/Dhaka
+  output_path: output
+  output_prefix: dhaka_1pct_
+
+  # Study area: DNCC + DSCC (full ward detail, current post-2020 numbering)
+  # + Savar + Keraniganj (single zone each - the only two surrounding
+  # upazilas with both real DTCA survey coverage and shapefile boundaries)
+  dhaka.study_area_upazilas:
+    - "Dhaka North City Corporation"
+    - "Dhaka South City Corporation"
+    - "Savar"
+    - "Keraniganj"
+
+  dhaka.ward_shp: spatial/ward_dhk_75.shp
+  dhaka.ward_number_field: "Ward No."
+  dhaka.ward_cc_field: CC
+  dhaka.ward_upazila_field: ADM3_EN
+
+  dhaka.hts: hts/dtca_full.xlsx
+  dhaka.census: census/bangladesh_bbs_population-and-housing-census-dataset_2022_admin-02.xlsx
+  dhaka.buildings_path: buildings/gis_osm_buildings_a_free_1.shp
+
+  # Not yet used by any active stage - reserved for when a MATSim network /
+  # richer point-amenity extraction is wired up
+  dhaka.osm_path: osm/bangladesh-latest.osm.pbf
+
+  home_location_sampling: weighted
+  mode_choice: False
+  matching_attributes: ["sex", "age_class", "has_license"]
+
+  # IPU aggregation levels:
+  # - commune_id (ward-level; not used by default here, see note below)
+  # - departement_id (whole study area as a single zone)
+  #
+  # Ward-level census marginals aren't available (BBS census is district-level
+  # only), so IPU control totals are built directly from the weighted DTCA HTS
+  # sample at the departement_id (whole-study-area) level - see
+  # dhaka/ipu/prepare.py. Households are still assigned to individual wards
+  # afterwards, drawn from the HTS's real ward distribution (dhaka/ipu/attributed.py).
+  IPU_aggregation_level: "departement_id"
+
+  # Used by the generic synthesis.population.spatial.primary.education stage
+  missing_trips_for_young_people: False
+
+  eqasim_commit: f375a37
+  eqasim_version: "2.0.0"
+  eqasim_branch: "sutlab"
+
+# Overrides for the Dhaka pipeline compared to the generic Île-de-France pipeline
+
+aliases:
+  synthesis.population.sampled: dhaka.ipu.attributed
+  data.census.filtered: dhaka.ipu.attributed
+  synthesis.population.income.selected: dhaka.income
+  synthesis.population.spatial.home.zones: dhaka.homes
+  synthesis.locations.home.locations: dhaka.locations.home
+  synthesis.locations.education: dhaka.locations.education
+  synthesis.locations.secondary: dhaka.locations.secondary
+  synthesis.locations.work: dhaka.locations.work
+  data.spatial.iris: dhaka.data.spatial.iris
+  data.spatial.codes: dhaka.entd_codes
+
+  data.hts.entd.raw: dhaka.data.hts.entd.raw
+  data.hts.entd.filtered: dhaka.data.hts.entd.filtered
+  data.hts.entd.cleaned: dhaka.data.hts.entd.cleaned
+  data.hts.entd.reweighted: dhaka.data.hts.entd.reweighted
+
+  synthesis.population.spatial.locations: dhaka.synthesis.population.spatial.locations
+  synthesis.population.spatial.primary.distance_distributions: dhaka.synthesis.population.spatial.primary.distance_distributions
+  synthesis.population.spatial.primary.work: dhaka.synthesis.population.spatial.primary.work
+  synthesis.population.spatial.primary.education: dhaka.synthesis.population.spatial.primary.education
+  synthesis.population.spatial.secondary.locations: dhaka.synthesis.population.spatial.secondary.locations
+
+  synthesis.output: dhaka.output
+  synthesis.population.trips: dhaka.synthesis.population.trips
+
+  # Not aliased (fall through to the generic implementation):
+  # - synthesis.population.enriched: Seville's override only calibrates PT
+  #   subscription/driving license against imputed HTS data; Dhaka's HTS
+  #   already has real has_license per person and no PT-subscription data,
+  #   so there's nothing to calibrate - the generic stage is used as-is.
+
+  # Not yet wired up (see `run:` above):
+  # data.gtfs.cleaned: dhaka.data.gtfs.cleaned
+  # matsim.simulation.prepare: dhaka.matsim.simulation.prepare
+  # matsim.simulation.run: dhaka.matsim.simulation.run
+  # matsim.scenario.prepare: matsim.simulation.prepare
+  # matsim.scenario.population: dhaka.matsim.scenario.population
