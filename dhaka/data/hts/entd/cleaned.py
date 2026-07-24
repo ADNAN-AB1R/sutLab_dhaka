@@ -10,6 +10,8 @@ This stage cleans the DTCA household travel survey.
 
 def configure(context):
     context.stage("data.hts.entd.raw")
+    context.stage("dhaka.data.spatial.iris")
+    context.config("random_seed")
 
 DEPARTMENT_VALUE = "1"
 
@@ -121,6 +123,10 @@ def convert_time(x):
 def execute(context):
     df_persons, df_households, df_trips = context.stage("data.hts.entd.raw")
 
+    random = np.random.RandomState(context.config("random_seed"))
+    gdf_wards = context.stage("dhaka.data.spatial.iris")[["commune_id", "geometry"]]
+    ward_point_pools = dhaka.wards.build_ward_point_pools(gdf_wards, random_state = random)
+
     df_persons = pd.DataFrame(df_persons, copy = True)
     df_households = pd.DataFrame(df_households, copy = True)
     df_trips = pd.DataFrame(df_trips, copy = True)
@@ -207,18 +213,40 @@ def execute(context):
     # ------------------------------------------------------------------
     # Trip distance
     #
-    # NOTE: the survey only records GPS coordinates for the trip origin (and,
-    # rarely, intermediate waypoints) - never for the final destination - and
-    # even the origin is only ~30% filled. We therefore cannot compute a real
-    # point-to-point euclidean distance here. As a placeholder (until the
-    # corrected ward shapefile is in place and we can fall back to ward
-    # centroid/building-level distances), we approximate distance from
-    # trip_duration and an assumed operating speed per mode. This is a rough
-    # stand-in, not a geocoded distance - flagged for revisiting.
+    # The survey never records the trip destination's GPS coordinates (and
+    # only records the origin's ~30% of the time), so a real point-to-point
+    # distance isn't available. Instead: sample a random point within the
+    # origin ward's polygon and within the destination ward's polygon (see
+    # dhaka.wards.build_ward_point_pools) and use the distance between them -
+    # this grounds distances in real geography and gives same-ward trips a
+    # small nonzero distance instead of collapsing to a single duration-based
+    # number regardless of where the trip actually went. Falls back to
+    # duration x assumed mode speed only for the small share of trips whose
+    # origin/destination ward couldn't be resolved (trips leaving the study
+    # area, e.g. to Gazipur/Narayanganj).
 
     df_trips["trip_duration"] = df_trips["trip_duration"].astype(float) * 60.0  # minutes -> seconds
+
+    def sample_ward_distance(origin_ward, destination_ward):
+        if origin_ward not in ward_point_pools or destination_ward not in ward_point_pools:
+            return np.nan
+
+        origin_pool = ward_point_pools[origin_ward]
+        destination_pool = ward_point_pools[destination_ward]
+
+        origin_point = origin_pool[random.randint(len(origin_pool))]
+        destination_point = destination_pool[random.randint(len(destination_pool))]
+
+        return float(np.hypot(*(origin_point - destination_point)))
+
+    df_trips["euclidean_distance"] = [
+        sample_ward_distance(origin_ward, destination_ward)
+        for origin_ward, destination_ward in zip(df_trips["origin_ward_id"], df_trips["destination_ward_id"])
+    ]
+
     speed_kmh = df_trips["mode"].astype(str).map(FALLBACK_SPEED_KMH).fillna(15.0)
-    df_trips["euclidean_distance"] = (df_trips["trip_duration"] / 3600.0) * speed_kmh * 1000.0
+    fallback_distance = (df_trips["trip_duration"] / 3600.0) * speed_kmh * 1000.0
+    df_trips["euclidean_distance"] = df_trips["euclidean_distance"].fillna(fallback_distance)
     df_trips["euclidean_distance"] = df_trips["euclidean_distance"].clip(lower = 50.0)  # avoid zero-length trips
 
     # ------------------------------------------------------------------

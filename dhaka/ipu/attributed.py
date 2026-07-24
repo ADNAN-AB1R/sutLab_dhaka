@@ -1,14 +1,21 @@
 import numpy as np
+import pandas as pd
+
+import dhaka.wards as wards
 
 """
 This stage adds additional attributes to the generated synthetic population from IPU.
 
-Ward assignment: unlike Seville (which draws a household's commune/ward from
-census-section-level population counts), we draw each household's ward from the
-real weighted DTCA HTS ward distribution (household_weight summed by home
-commune_id) - the finest-grained, most reliable population-by-ward source
-available for our study area (see dhaka/ipu/prepare.py for why the BBS census
-can't fill this role).
+Ward assignment: each household's ward is drawn from the real census
+household count per ward (BBS 2022 Community Report Table C-01, extracted in
+dhaka/data/census/extract_community_report.py) for all DNCC/DSCC wards - the
+same source that anchors the IPU demographic targets (dhaka/ipu/prepare.py),
+so the synthetic population's geography and demographics are consistent with
+each other. Savar/Keraniganj have no ward-level census rows, so their (single
+coarse) zones keep the expansion-factor-weighted HTS household count used for
+everything before the census integration. Both sources are absolute
+full-population household counts, so mixing them into one draw distribution
+is scale-consistent.
 """
 
 def configure(context):
@@ -16,6 +23,24 @@ def configure(context):
     context.stage("dhaka.data.spatial.iris")
     context.stage("dhaka.data.hts.entd.filtered")
     context.config("random_seed")
+    context.config("data_path")
+    context.config("dhaka.census_wards_c01", "census/extracted/census_c01_wards.csv")
+
+def load_census_ward_weights(context):
+    """Census household count per commune_id for all DNCC/DSCC wards."""
+    df_c01 = pd.read_csv(
+        f"{context.config('data_path')}/{context.config('dhaka.census_wards_c01')}"
+    )
+
+    prefixes = { "Dhaka South City Corporation": "S", "Dhaka North City Corporation": "N" }
+    assert wards.CITY_CORP_PREFIXES == prefixes  # keep in sync with the shared zoning scheme
+
+    commune_id = (
+        df_c01["city_corp"].map({ "DSCC": "S", "DNCC": "N" })
+        + df_c01["ward_num"].astype(int).astype(str).str.zfill(2)
+    )
+
+    return pd.Series(df_c01["hh_total"].values, index = commune_id)
 
 def execute(context):
     df = context.stage("dhaka.ipu.population").copy()
@@ -31,11 +56,16 @@ def execute(context):
         df["departement_id"] = df["commune_id"].str[:2]
 
     # Spatial identifiers: departement -> commune -> iris
-    # Distribute households across wards within each departement, weighted by
-    # the real (expansion-factor-weighted) household count per ward from the HTS
+    # Distribute households across wards within each departement: census
+    # household count per ward for DNCC/DSCC, HTS-weighted count for the two
+    # peri-urban zones without ward-level census (see module docstring)
     if "commune_id" not in df.columns:
         df_hts_households, _, _ = context.stage("dhaka.data.hts.entd.filtered")
-        ward_weights = df_hts_households.groupby("commune_id")["household_weight"].sum()
+        hts_ward_weights = df_hts_households.groupby("commune_id")["household_weight"].sum()
+
+        ward_weights = load_census_ward_weights(context)
+        for zone in wards.UPAZILA_ZONES.values():
+            ward_weights[zone] = hts_ward_weights.get(zone, 0.0)
 
         household_communes = {}
         for dept_id in df["departement_id"].unique():

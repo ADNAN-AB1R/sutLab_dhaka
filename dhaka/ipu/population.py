@@ -135,8 +135,20 @@ def process_ipu_batch(context, arguments):
     tolerance = context.data("tolerance")
 
     # Initialize synthesis engine
-    # Define which variables are Household level vs Person level
+    # household_size_capped is a genuine household-level attribute (target
+    # counts households). age_class/sex are person-level attributes (target
+    # counts persons) but must still broadcast their weight adjustment to
+    # the whole household - otherwise different members of the same
+    # household end up with different post-raking weights, and TRS's
+    # integerization step (which collapses each household to a single
+    # representative weight) silently keeps whichever member's row happens
+    # to be listed first, discarding the raking result for everyone else.
+    # Verified empirically: this was the root cause of the observed 15-19
+    # age-cohort underfit (person-level raked weight matched the census
+    # target within 0.1pp, but the TRS-collapsed weight undershot it by
+    # ~3pp, reproducing the underfit almost exactly) - see diagnostic notes.
     household_vars = ["household_size_capped"]
+    person_household_vars = ["age_class", "sex"]
 
     synthesizer = PopulationSynthesis(
         max_iterations=max_iterations,
@@ -145,6 +157,7 @@ def process_ipu_batch(context, arguments):
         household_id_col="household_id",
         person_id_col="person_id",
         household_vars=household_vars,
+        person_household_vars=person_household_vars,
         verbose=False,
     )
 

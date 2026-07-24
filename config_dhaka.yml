@@ -24,6 +24,14 @@ run:
   # eqasim-free alternative used instead):
   # - matsim.output
 
+  # Validation/analysis figures (age, sex, household-size, activity chains,
+  # mode/purpose distances) comparing synthetic output against HTS and
+  # census - see analysis_dhaka/dhaka/ivt_style/. Mirrors how Seville wires
+  # analysis.seville.ivt_style.* into config_seville.yml's own run: list.
+  - analysis_dhaka.dhaka.ivt_style.compare_ipu
+  - analysis_dhaka.dhaka.ivt_style.analysis
+  - analysis_dhaka.dhaka.ivt_style.save_output
+
 
 # Here the configuration of the pipeline starts
 config:
@@ -43,6 +51,9 @@ config:
   output_path: output
   output_prefix: dhaka_1pct_
 
+  # Where analysis_dhaka.dhaka.ivt_style.* stages write validation figures/CSVs
+  analysis_path: output/analysis
+
   # Study area: DNCC + DSCC (full ward detail, current post-2020 numbering)
   # + Savar + Keraniganj (single zone each - the only two surrounding
   # upazilas with both real DTCA survey coverage and shapefile boundaries)
@@ -59,10 +70,16 @@ config:
 
   dhaka.hts: hts/dtca_full.xlsx
   dhaka.census: census/bangladesh_bbs_population-and-housing-census-dataset_2022_admin-02.xlsx
+  # Ward-level age/sex marginals extracted from the BBS 2022 "Community Report:
+  # Dhaka" PDF (Tables C-01/C-02, DNCC+DSCC only - see dhaka/ipu/prepare.py)
+  dhaka.census_wards_c01: census/extracted/census_c01_wards.csv
+  dhaka.census_wards_c02: census/extracted/census_c02_wards.csv
   dhaka.buildings_path: buildings/gis_osm_buildings_a_free_1.shp
 
-  # Not yet used by any active stage - reserved for when a MATSim network /
-  # richer point-amenity extraction is wired up
+  # Used by dhaka.data.osm.locations to supplement the sparsely-typed
+  # buildings file with point-of-interest/amenity-polygon data (work/
+  # education/shop/leisure candidates) - optional: falls back to
+  # buildings-only with a warning if the file is absent
   dhaka.osm_path: osm/bangladesh-latest.osm.pbf
 
   home_location_sampling: weighted
@@ -73,11 +90,15 @@ config:
   # - commune_id (ward-level; not used by default here, see note below)
   # - departement_id (whole study area as a single zone)
   #
-  # Ward-level census marginals aren't available (BBS census is district-level
-  # only), so IPU control totals are built directly from the weighted DTCA HTS
-  # sample at the departement_id (whole-study-area) level - see
-  # dhaka/ipu/prepare.py. Households are still assigned to individual wards
-  # afterwards, drawn from the HTS's real ward distribution (dhaka/ipu/attributed.py).
+  # IPU still rakes at the departement_id (whole-study-area) level, not per
+  # ward - the DTCA HTS seed sample isn't large enough per ward to rake
+  # independently at commune_id granularity. But the control totals it rakes
+  # against now come from real ward-level census marginals (summed across all
+  # DNCC/DSCC wards) for the city-corp portion of the study area, with an
+  # HTS-derived fallback for Savar/Keraniganj (no ward/union-level census
+  # exists there) - see dhaka/ipu/prepare.py. Households are still assigned
+  # to individual wards afterwards, drawn from the HTS's real ward
+  # distribution (dhaka/ipu/attributed.py).
   IPU_aggregation_level: "departement_id"
 
   # Used by the generic synthesis.population.spatial.primary.education stage
