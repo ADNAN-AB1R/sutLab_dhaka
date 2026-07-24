@@ -8,8 +8,20 @@ working_directory: cache
 run:
   - synthesis.output
 
-  # Not yet wired up for Dhaka (needs a MATSim road network built from the OSM
-  # .pbf extracts under raw_data/Dhaka/osm/, and there is no GTFS feed yet):
+  # MATSim-format demand-side files (population/facilities/households/vehicles).
+  # These are pure Python, no Java/eqasim needed. The supply side (network,
+  # transit schedule/vehicles) is pre-built externally via pt2matsim and lives
+  # under raw_data/Dhaka/matsim/ - see dhaka/matsim/assemble_scenario.py, which
+  # combines both sides into a runnable scenario + config.xml.
+  - matsim.scenario.population
+  - matsim.scenario.facilities
+  - matsim.scenario.households
+  - matsim.scenario.vehicles
+  - dhaka.matsim.assemble_scenario
+
+  # Not wired up (needs Java classes in eqasim-java that only exist for
+  # Seville's mode set - see dhaka/matsim/assemble_scenario.py for the
+  # eqasim-free alternative used instead):
   # - matsim.output
 
 
@@ -103,15 +115,18 @@ aliases:
   synthesis.output: dhaka.output
   synthesis.population.trips: dhaka.synthesis.population.trips
 
-  # Not aliased (fall through to the generic implementation):
+  matsim.scenario.population: dhaka.matsim.scenario.population
+
+  # Not aliased (fall through to the generic implementation - pure Python,
+  # no per-city logic needed):
   # - synthesis.population.enriched: Seville's override only calibrates PT
   #   subscription/driving license against imputed HTS data; Dhaka's HTS
   #   already has real has_license per person and no PT-subscription data,
   #   so there's nothing to calibrate - the generic stage is used as-is.
+  # - matsim.scenario.facilities / households / vehicles: fully generic
 
-  # Not yet wired up (see `run:` above):
+  # Not wired up (see `run:` above - needs Seville-only eqasim-java classes):
   # data.gtfs.cleaned: dhaka.data.gtfs.cleaned
   # matsim.simulation.prepare: dhaka.matsim.simulation.prepare
   # matsim.simulation.run: dhaka.matsim.simulation.run
   # matsim.scenario.prepare: matsim.simulation.prepare
-  # matsim.scenario.population: dhaka.matsim.scenario.population
