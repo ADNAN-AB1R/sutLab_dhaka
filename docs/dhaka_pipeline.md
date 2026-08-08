@@ -299,12 +299,59 @@ synthetic output via `sampling_rate`.
 | **Trip distance** | Real geocoded coordinates (Nominatim + official address/street-name matching, `data/hts/entd/{streets,trip_distance}.py`) | No destination coordinates exist in the survey at all; distance is sampled between random points in the origin/destination ward polygons, with a duration×speed fallback for the ~2% of trips that leave the study area (§4) |
 | **Mode set** | 5 standard modes: walk, pt, bike, car, car_passenger | 7 modes: walk, bike, car, pt, **rickshaw**, **paratransit**, other — added because rickshaw alone is ~30–35% of Dhaka trips and doesn't fit any standard category |
 | **Driving license** | Real for the respondent only; imputed for others via Bernoulli draw calibrated against government license statistics | Real for every person directly from the survey — no imputation, no external license dataset needed |
-| **Household income** | Hardcoded to 0 (`seville/income.py`) — no real income data available | Real income bracket captured (`income_class` ordinal from `q7_hh_income`), though not yet threaded into a numeric `household_income` — currently still defaults to 0 downstream; a low-risk future improvement |
+| **Household income** | Hardcoded to 0 (`seville/income.py`) — no real income data available | Real income bracket (`income_class` ordinal from `q7_hh_income`, computed in `dhaka/data/hts/entd/cleaned.py`) is threaded through IPU/TRS as a passenger column (`dhaka/ipu/population.py`) and surfaced as `household_income` by `dhaka/income.py` — no longer hardcoded to 0 |
 | **PT-subscription/license calibration** | `seville/synthesis/population/enriched.py` overrides the generic stage to calibrate against `seville.data.pt.constraints`/`license.constraints` | Not needed (real license data, no PT-subscription data either way) — generic `synthesis/population/enriched.py` used unmodified |
 | **Home/amenity locations** | Separate official building registry (homes) + OSM `.pbf` via `pyrosm` (work/education/shop/leisure) | Homes: the nationwide Geofabrik buildings file, bbox-clipped. Work/education/shop/leisure: the same file's sparsely-populated `type` tag (~3.2K candidates) **merged with point amenities and amenity-tagged polygons read directly from `bangladesh-latest.osm.pbf`** via GDAL's OSM driver (~26.9K more candidates) — see `dhaka/data/osm/locations.py`. The `.pbf` path is optional; the stage falls back to buildings-only with a warning if it's absent |
 | **GTFS / road network** | Fetched and auto-built inside the pipeline (`data/gtfs/cleaned.py`, `data/osm/chunked.py`, pt2matsim via `matsim.scenario.supply.*`) | No official Bangladesh GTFS exists — the user built one manually (stop times derived via the ORS API) and ran pt2matsim externally; this pipeline just copies the resulting network/schedule/vehicles files in (`dhaka.matsim.assemble_scenario`) |
-| **MATSim scenario assembly** | `eqasim-java`'s `SevilleConfigurator`/`RunAdaptConfig`/`RunSimulation` (Java) — full config generation, population routing, mode-choice calibration, and can run the simulation itself | Bypasses eqasim's Java "prepare" step entirely, because `SevilleModeChoiceModule` hardcodes exactly 5 modes and doesn't recognize rickshaw/paratransit. Instead: pure-Python demand-side writers + a hand-written `config.xml` (teleported routing for every non-car mode) — actually running MATSim happens in the user's own IntelliJ project, not this pipeline |
-| **`mode_choice` config** | `True` — MATSim dynamically re-chooses mode during replanning iterations via `eqasim-java`'s discrete-choice module | `False` — no dynamic re-choice (that module is blocked, see above), but every leg still carries a real **assigned** mode taken from the matched HTS donor trip (`dhaka/synthesis/population/trips.py`), written into both `population.xml.gz`'s `<leg mode=...>` elements and `trips.csv`'s `mode` column. Fixed at synthesis time rather than resimulated |
+| **MATSim scenario assembly** | `eqasim-java`'s `SevilleConfigurator`/`RunAdaptConfig`/`RunSimulation` (Java) — full config generation, population routing, mode-choice calibration, and can run the simulation itself | Bypasses eqasim's Java "prepare" step entirely, because `SevilleModeChoiceModule` hardcodes exactly 5 modes and doesn't recognize rickshaw/paratransit. Instead: pure-Python demand-side writers + a hand-written `config.xml` (teleported routing for every non-car mode). Actually running MATSim uses the `matsim_run/` Maven project in this repo (vanilla MATSim, no eqasim-java needed) — see §9 |
+| **`mode_choice` config** | `True` — MATSim dynamically re-chooses mode during replanning iterations via `eqasim-java`'s discrete-choice module | `False` — no *dynamic* re-choice during MATSim's iterations (config.xml's replanning module only has ChangeExpBeta + ReRoute). But every leg's mode comes from a discrete choice model fitted on the DTCA HTS (`dhaka/mode_choice/estimate.py`) and applied to each synthetic trip's real assigned distance and traveler covariates (`dhaka/synthesis/population/mode_choice.py`) — a modeled, per-trip assignment made once at synthesis time, not a wholesale copy of the matched HTS donor's mode |
+
+## 9. Running MATSim on the assembled scenario
+
+`dhaka.matsim.assemble_scenario` produces a complete, plain-MATSim scenario
+under `output/` (`dhaka_1pct_population.xml.gz`, `facilities.xml.gz`,
+`households.xml.gz`, `vehicles.xml.gz`, `network.xml.gz`,
+`transit_schedule.xml.gz`, `transit_vehicles.xml.gz`, `config.xml`) — no
+eqasim-java involved (see §8's "MATSim scenario assembly" row for why).
+Actually running it uses `matsim_run/`, a small Maven project in this repo
+(vanilla `matsim-core`, which already bundles public-transit support at the
+pinned version — no separate `pt` contrib needed).
+
+**Full build/run/troubleshooting instructions live in
+[`matsim_run/README.md`](../matsim_run/README.md)** — colocated with the
+Maven project itself. Summary:
+
+```bash
+# One-time build (downloads MATSim + dependencies, ~10-15 min first time)
+cd matsim_run
+mvn clean package
+
+# Run (from the output/ directory, so relative paths in config.xml resolve)
+cd ../output
+java -jar ../matsim_run/target/dhaka-matsim-run-1.0.jar dhaka_1pct_config.xml
+```
+
+Key things to know before running:
+- **MATSim version is pinned to 2025.0**, not the newest snapshot line -
+  confirmed empirically that 2026.0's class files need JDK 25, while 2025.0
+  runs on JDK 17+. See `matsim_run/pom.xml`'s comments if you want to bump
+  this.
+- **`lastIteration` defaults to 100** (`matsim_last_iteration` in
+  `config_dhaka.yml`), and `flowCapacityFactor`/`storageCapacityFactor` in
+  `config.xml` are scaled to `sampling_rate` (0.01) — both added specifically
+  because their absence is a correctness bug, not a style choice: without
+  capacity scaling, a 1% population tries to congest a network sized for
+  100% of real Dhaka traffic and the simulation looks artificially empty.
+- **Smoke-test with 1 iteration before a real run** — `matsim_run/README.md`
+  has the exact steps. A real 100-iteration run takes substantially longer
+  and should run detached/in the background.
+- **This is not calibration.** A completed run gives you `scorestats.csv`
+  (score convergence), `modestats.csv` (mode-share stability across
+  iterations - should stay flat, since mode isn't dynamically re-chosen),
+  and link-level volumes/travel times to sanity-check for implausible
+  congestion. Calibration - tuning scoring parameters and capacity factors
+  against real observed Dhaka benchmarks - only becomes meaningful once
+  you have that output to compare against, and hasn't started yet.
 
 ## Known limitations / natural next steps
 
@@ -316,8 +363,11 @@ synthetic output via `sampling_rate`.
   university candidates (typed buildings + OSM POIs, `dhaka/data/osm/
   locations.py`), up from ~244 — match success rose from 87.3% to 90.8%.
   The remaining gap is mostly university seekers, still the sparsest category.
-- `household_income` is real-data-available but not yet numerically derived
-  from `income_class`.
+- `household_income` is now derived from `income_class` (threaded through
+  IPU/TRS and surfaced by `dhaka/income.py`) rather than hardcoded to 0 — see
+  §8's "Household income" row. It remains on the raw 0–8/-1 ordinal DTCA
+  bracket scale, not a monetary (Taka) figure, by design (avoids assuming a
+  value for the open-ended "more than Tk 100,000" top bracket).
 - **Household-size shape now comes from the district-level BBS workbook
   instead of the HTS** (§5/§6), fixing a real gap: 1-person households were
   0.26% of the *raw, unweighted* survey roster (135/52,672 households,
@@ -349,15 +399,34 @@ synthetic output via `sampling_rate`.
   structure for 1-person or 5+ households specifically) should be aware
   the underlying donor pool for those buckets is small.
 - `mode_choice: False` means MATSim doesn't dynamically re-choose mode during
-  replanning (the eqasim-java module that would is blocked, see §8) — every
-  leg still carries a real assigned mode from the matched HTS donor trip, so
-  this is a fixed-mode-assignment scenario, not a mode-blind one. A full
-  discrete-choice (MNL) model estimated on the HTS would be the natural next
-  step if dynamic mode re-choice is needed for policy analysis.
+  replanning (the eqasim-java module that would is blocked, see §8) — but
+  every leg's mode now comes from a discrete choice (conditional logit) model
+  fitted on the DTCA HTS (`dhaka/mode_choice/estimate.py`, coefficients in
+  `dhaka/mode_choice/fitted_coefficients.json`) and applied per synthetic
+  trip's real assigned distance and traveler covariates
+  (`dhaka/synthesis/population/mode_choice.py`), not a wholesale copy of the
+  matched HTS donor's mode. Two caveats worth keeping in mind: (1)
+  alternative-specific travel times are still a distance ÷ assumed-speed
+  proxy, not real network/GTFS skims, so the model doesn't yet respond to
+  actual network conditions the way MATSim's own simulation will; (2) the
+  model's standard errors are approximate (normalized survey weights, no
+  cluster-robust correction for repeated trips per person/household) — the
+  coefficients themselves are stable across multiple estimation runs, but
+  treat significance levels as indicative, not publication-grade.
 - Savar and Keraniganj (~20% of synthesized households) have no ward-level
   census coverage: their population scale, demographics, and spatial
   placement all rest solely on the HTS and its expansion factors, unlike
   DNCC/DSCC which are now anchored to real census counts throughout (§5, §6).
-- `matsim.output` (eqasim-driven full scenario + simulation run) needs either
-  new Dhaka-specific Java classes in `eqasim-java`, or continuing with the
-  eqasim-free path already in place.
+- `matsim.output` (eqasim-driven full scenario + simulation run) still needs
+  either new Dhaka-specific Java classes in `eqasim-java`, or continuing with
+  the eqasim-free path already in place - the latter is what's actually used:
+  `dhaka.matsim.assemble_scenario` produces a complete plain-MATSim scenario,
+  and `matsim_run/` (a small Maven project in this repo, not eqasim-java) runs
+  it. See §9.
+- The MATSim run itself is not yet calibrated - `config.xml`'s scoring
+  parameters (activity utility rates, mode constants) are reasonable
+  defaults, not empirically tuned against observed Dhaka benchmarks (traffic
+  counts, transit ridership, travel-time surveys). Calibration is meaningful
+  only once a full run's output exists to compare against those benchmarks;
+  see §9's "Interpreting results" for what a first run's output can and
+  can't tell you before that happens.

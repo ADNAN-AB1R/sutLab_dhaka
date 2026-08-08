@@ -11,3 +11,7 @@ config_local_*.yml
 euler_*.sh
 slurm-*.out
 *.xlsx
+
+# Maven build output for matsim_run/ (includes an ~85MB shaded jar - rebuild
+# via `mvn clean package` in matsim_run/, don't commit it)
+target/
