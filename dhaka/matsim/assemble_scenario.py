@@ -244,16 +244,52 @@ CONFIG_TEMPLATE = """<?xml version="1.0" ?>
         </parameterset>
     </module>
 
+    <!-- Runs mode choice as an in-simulation replanning strategy: every
+         time it's picked, DiscreteModeChoice re-estimates every mode
+         alternative for each trip using that iteration's ACTUAL simulated/
+         routed travel time (via matsim_run's FittedMnlTripEstimator, bound
+         under the name "Fitted" below) and the same linear-utility MNL
+         fitted in dhaka/mode_choice/estimate.py, then samples one
+         (MultinomialLogit selector, consistent with how the model was
+         fit/applied elsewhere - not a deterministic argmax). This replaces
+         the old behavior where dhaka/synthesis/population/mode_choice.py's
+         one-shot synthesis-time assignment was frozen for the whole run;
+         that stage's output is now only the INITIAL seed plan. modelType
+         is Trip (not Tour) because the fitted model is trip-level - no
+         tour-finding/vehicle-continuity constraints are configured, a
+         known simplification already shared by every other non-car mode
+         being teleported rather than network-routed. modeAvailability
+         "Car" gates the car alternative by the population's existing
+         hasLicense/carAvailability person attributes (confirmed via the
+         actual matsim-core jar: PersonUtils.getLicense() reads the
+         "hasLicense" attribute key, which dhaka/matsim/scenario/
+         population.py already writes) - every other mode here has no
+         such constraint in Dhaka (rickshaw/paratransit need no license). -->
+    <module name="DiscreteModeChoice">
+        <param name="modelType" value="Trip" />
+        <param name="tripEstimator" value="Fitted" />
+        <param name="selector" value="MultinomialLogit" />
+        <param name="modeAvailability" value="Car" />
+
+        <parameterset type="modeAvailability:Car">
+            <param name="availableModes" value="walk,bike,car,pt,rickshaw,paratransit" />
+        </parameterset>
+    </module>
+
     <module name="replanning">
         <param name="maxAgentPlanMemorySize" value="5" />
 
         <parameterset type="strategysettings">
             <param name="strategyName" value="ChangeExpBeta" />
-            <param name="weight" value="0.8" />
+            <param name="weight" value="0.5" />
         </parameterset>
         <parameterset type="strategysettings">
             <param name="strategyName" value="ReRoute" />
             <param name="weight" value="0.2" />
+        </parameterset>
+        <parameterset type="strategysettings">
+            <param name="strategyName" value="DiscreteModeChoice" />
+            <param name="weight" value="0.3" />
         </parameterset>
     </module>
 
@@ -263,6 +299,8 @@ CONFIG_TEMPLATE = """<?xml version="1.0" ?>
         <param name="lastIteration" value="{last_iteration}" />
         <param name="mobsim" value="qsim" />
         <param name="overwriteFiles" value="deleteDirectoryIfExists" />
+        <param name="writeEventsInterval" value="10" />
+        <param name="writePlansInterval" value="10" />
     </module>
 </config>
 """

@@ -173,6 +173,126 @@ Python pipeline) to regenerate `config.xml` before rebuilding/re-running
 the Java side — don't hand-edit the generated `config.xml` directly, since
 it'll be overwritten the next time the pipeline runs that stage.
 
+## In-simulation mode choice (discrete_mode_choice)
+
+`dhaka/synthesis/population/mode_choice.py` assigns each trip's mode
+**once**, at population-synthesis time, using a distance/fallback-speed
+travel-time proxy. That's only the *initial seed* plan. `config.xml`'s
+`DiscreteModeChoice` module (see `dhaka/matsim/assemble_scenario.py`'s
+`CONFIG_TEMPLATE`) plus a `DiscreteModeChoice` entry in the `replanning`
+module make MATSim's `org.matsim.contrib:discrete_mode_choice` (DMC) contrib
+re-estimate every trip's mode each time that replanning strategy is picked
+for an agent — using that iteration's *actual* simulated/routed travel time,
+not the synthesis-time proxy. The underlying utility model is the same
+fitted MNL both places (`dhaka/mode_choice/fitted_coefficients.json`,
+`U = beta_time*time + asc[mode] + sum(coefficients[cov][mode]*value)`),
+implemented twice: in Python (`mode_choice.py`'s `apply_model()`, used
+statically) and in Java (`matsim_run/src/main/java/org/dhaka/
+FittedMnlTripEstimator.java`, used every iteration).
+
+Relevant classes:
+- `FittedCoefficients.java` — parses `fitted_coefficients.json` (path is
+  CWD-relative: `../dhaka/mode_choice/fitted_coefficients.json`, since this
+  project's convention is to run from `output/` — see the path-resolution
+  note above).
+- `FittedMnlTripEstimator.java` — the actual per-trip utility estimator,
+  reading person covariates from the same `population.xml` attributes
+  `dhaka/matsim/scenario/population.py` already writes (`householdIncome`,
+  `age`, `sex`, and license via `PersonUtils.getLicense()`, which reads the
+  `hasLicense` attribute key — confirmed by decompiling matsim-core, not
+  assumed).
+- `DhakaModeChoiceExtension.java` — binds `FittedMnlTripEstimator` under the
+  name `"Fitted"` (matches `CONFIG_TEMPLATE`'s `tripEstimator` param).
+- `RunDhaka.java` — installs `DiscreteModeChoiceModule` +
+  `DhakaModeChoiceExtension`, and (important, easy to miss) pre-registers
+  `DiscreteModeChoiceConfigGroup` when loading `config.xml`.
+
+Trip-based, not tour-based (`modelType=Trip`): matches the fitted model's
+own granularity (one independent choice per trip), and avoids the added
+complexity of tour-finding + vehicle-continuity constraints tour-based DMC
+needs. Known simplification, shared with the rest of this scenario: an
+agent could in principle drive to work and bus home, stranding the car —
+same caliber of simplification as every non-car mode already being
+teleported rather than network-routed.
+
+### Three Guice wiring issues, already fixed (don't reintroduce)
+
+Getting DMC to actually run (not just build) took three real fixes, each
+confirmed by decompiling the actual `discrete_mode_choice-2025.0.jar` and
+`matsim-2025.0.jar` — not guessed from docs, which are accurate on *usage*
+but not on these specific gotchas:
+
+1. **`DiscreteModeChoiceConfigGroup` must be pre-registered** when calling
+   `ConfigUtils.loadConfig(...)` (see `RunDhaka.java`). Without it,
+   `<module name="DiscreteModeChoice">` parses as a generic untyped
+   `ConfigGroup`, and `DiscreteModeChoiceModule`'s Guice bindings fail with
+   a cascading `[Guice/JitDisabled]: Explicit bindings are required and
+   Scenario is not explicitly bound` error — for *unrelated* modules
+   (`SwissRailRaptorModule`, `CountsModule`, ...), which makes the real
+   cause non-obvious from the error alone.
+2. **Use `com.google.inject.Inject`, not `javax.inject.Inject`**, on
+   `FittedMnlTripEstimator`'s constructor. With `javax.inject.Inject`, Guice
+   reported `No injectable constructor for type FittedMnlTripEstimator`
+   despite the annotation being present.
+3. **Bind `FittedCoefficients` explicitly** in
+   `DhakaModeChoiceExtension.installExtension()` (`bind(FittedCoefficients.class);`).
+   This Controler setup runs with JIT bindings disabled, so even a plain
+   concrete class with a no-arg constructor needs an explicit `bind()` call.
+
+### Calibration: `dhaka/mode_choice/calibrate_asc.py`
+
+The fitted model was estimated against HTS trips using a distance/fixed-
+speed travel-time proxy; DMC drives it with real simulated travel times
+instead, so simulated mode shares won't match HTS-observed shares out of
+the box — that gap is what ASC calibration closes (standard sample-
+enumeration procedure, Train 2009): for each mode,
+`asc_new = asc_old + ln(target_share / simulated_share)`, rebased so the
+reference mode (`walk`)'s implicit ASC stays at 0.
+
+```bash
+python -m dhaka.mode_choice.calibrate_asc output/simulation_output/modestats.csv
+```
+
+This overwrites `fitted_coefficients.json` in place with updated ASCs —
+`FittedMnlTripEstimator` picks it up fresh on the next run, no rebuild
+needed. Because MATSim's response to new ASCs is itself non-linear (route
+choice/congestion feedback), this is **iterative**: re-run matsim_run for
+enough iterations to reconverge, regenerate `modestats.csv`, run the
+calibration script again, repeat until each mode's simulated share is
+within tolerance (e.g. ±2 percentage points) of target.
+
+As of the last calibration round run in this project: `bike`, `rickshaw`,
+`paratransit`, `pt`, and `walk` are within a few points of their HTS
+targets; `car` is still converging (needed the largest ASC swing of any
+mode — real routed car travel time appears to penalize car much more than
+the synthesis-time distance/speed proxy did) and will likely need a couple
+more calibration rounds. Continuing that loop is the natural next step
+before treating simulated mode shares as final.
+
+## Known limitations
+
+- **Car calibration not yet converged** — see the note directly above.
+- **Non-car, non-pt modes are teleported**, not network-routed (walk, bike,
+  rickshaw, paratransit) — see the `routing` module in `CONFIG_TEMPLATE`.
+  Real congestion/interaction effects for these modes aren't captured.
+- **DiscreteModeChoice is trip-based**, so vehicle continuity across a
+  tour isn't enforced (see above).
+- **pt routing depends on SwissRailRaptor's intermodal access/egress**
+  (walk + rickshaw to reach a stop) — raised real trip-level pt routing
+  success from 51% to 71.5% on a 1% sample when added, but isn't 100%; some
+  trips still fall back to a direct teleported walk when no viable transit
+  path is found. See `matsim_run/analyze_mode_fallback.py` for a trip-level
+  (not naive leg-level) analysis tool that distinguishes genuine walk trips
+  from failed-pt-routing-forced-to-walk.
+- **Transit vehicle `passengerCarEquivalents` and network `flowCapacityFactor`/
+  `storageCapacityFactor` are both scaled by `sampling_rate`** (see
+  `CONFIG_TEMPLATE`'s `qsim` module and `scale_transit_pce()` in
+  `assemble_scenario.py`) — without this, a handful of full-frequency,
+  full-size transit vehicles run against an artificially shrunk road
+  network and cause spurious gridlock. If you change `sampling_rate` in
+  `config_dhaka.yml`, both scale automatically; don't hand-tune one without
+  the other.
+
 ## Common mistakes
 
 - **Don't compile `RunDhaka.java` by hand with `javac`, and don't run it
@@ -204,11 +324,15 @@ What to look at, all under `simulation_output/`:
   upward and flatten out by the later iterations. If it's still climbing
   steeply at iteration 100, the run needs more iterations before its output
   means anything.
-- **`modestats.csv`** — mode share per iteration. Should stay essentially
-  flat across all iterations: `config.xml`'s replanning module only has
-  `ChangeExpBeta` (plan selection) + `ReRoute` (route innovation), matching
-  `mode_choice: False` — mode itself is never re-chosen during replanning.
-  If mode shares drift, something is wrong with the config, not the model.
+- **`modestats.csv`** — mode share per iteration. Should **move** across the
+  early-to-mid iterations and then settle/flatten out — `config.xml`'s
+  `replanning` module includes a `DiscreteModeChoice` strategy (see
+  "In-simulation mode choice" below), so mode is actively re-chosen each
+  time that strategy is picked, using that iteration's real simulated
+  travel times. If it's dead flat from iteration 0, something is wrong
+  (most likely `DiscreteModeChoiceConfigGroup` failed to register — check
+  the log for Guice `CreationException`/"explicit bindings" errors around
+  startup, not partway through).
 - **`legHistogram.txt`** and its plots — departure-time distribution by
   mode; useful for spotting an implausible rush-hour pattern.
 - **Per-iteration `ITERS/it.N/N.linkstats.csv.gz`** (or the final

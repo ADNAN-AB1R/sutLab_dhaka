@@ -89,6 +89,20 @@
                 </exclusion>
             </exclusions>
         </dependency>
+
+        <!-- Runs mode choice as an in-simulation replanning strategy (real
+             simulated travel times each iteration) instead of the one-shot
+             static assignment dhaka/synthesis/population/mode_choice.py does
+             at population-synthesis time. Version kept in lockstep with
+             matsim.version above - confirmed by inspecting the actual jar
+             (contribs/discrete_mode_choice/pom.xml on matsim-org/matsim-libs)
+             that this contrib is versioned identically to matsim-core, not
+             independently. -->
+        <dependency>
+            <groupId>org.matsim.contrib</groupId>
+            <artifactId>discrete_mode_choice</artifactId>
+            <version>${matsim.version}</version>
+        </dependency>
     </dependencies>
 
     <build>
