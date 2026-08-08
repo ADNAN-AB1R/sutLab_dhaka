@@ -1,4 +1,42 @@
 <?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Minimal runner project for actually executing the Dhaka MATSim scenario
+  assembled by dhaka/matsim/assemble_scenario.py (output/dhaka_1pct_*).
+
+  Deliberately NOT eqasim-java: assemble_scenario.py already produces a
+  complete, plain-MATSim scenario (population/facilities/households/
+  vehicles/network/transit_schedule all in native MATSim XML, plus a
+  hand-written config.xml) without going through eqasim's Java "prepare"
+  step - see that file's docstring for why (eqasim-java's sutlab-branch
+  mode-choice module hardcodes Seville's 5 modes and doesn't recognize
+  rickshaw/paratransit). So all that's needed here is vanilla matsim-core,
+  which already bundles public-transit support (confirmed by inspecting the
+  2025.0 jar directly - no separate "pt" contrib artifact exists, transit
+  classes ship inside org.matsim:matsim itself).
+
+  Version pinned to 2025.0 (the latest full stable annual release as of
+  writing, not the rolling weekly-snapshot line) specifically because the
+  newer snapshot line's class files require JDK 25, confirmed by testing
+  locally: an installed JDK 24 hits
+  "UnsupportedClassVersionError: ... class file version 69.0 ... this
+  version of the Java Runtime only recognizes class file versions up to
+  68.0". 2025.0 (and 2024.0) load and run fine on JDK 17+. If you have
+  JDK 25 available and want the latest snapshot instead, bump matsim.version
+  below AND maven.compiler.release - otherwise leave both as-is.
+
+  NOTE: an automated "Java upgrade to latest LTS" tool has previously
+  rewritten this file to target maven.compiler.release=25, which breaks the
+  build under anything older than JDK 25, and silently dropped the
+  jai_core/jai_imageio exclusions below (reintroducing the ImageIO crash
+  documented in matsim_run/README.md). If the build starts failing with
+  "release version 25 not supported" or the ImageIO "vendorName == null!"
+  error again, check this file against matsim_run/README.md's documented
+  configuration before assuming something else broke.
+
+  Usage:
+    mvn clean package
+    java -jar target/dhaka-matsim-run-1.0.jar ../output/dhaka_1pct_config.xml
+-->
 <project xmlns="http://maven.apache.org/POM/4.0.0"
          xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
          xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
@@ -10,7 +48,8 @@
     <packaging>jar</packaging>
 
     <properties>
-        <maven.compiler.release>25</maven.compiler.release>
+        <maven.compiler.source>17</maven.compiler.source>
+        <maven.compiler.target>17</maven.compiler.target>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
         <matsim.version>2025.0</matsim.version>
     </properties>
@@ -27,20 +66,38 @@
             <groupId>org.matsim</groupId>
             <artifactId>matsim</artifactId>
             <version>${matsim.version}</version>
+            <exclusions>
+                <!-- Transitively pulled by geotools (gt-main / gt-coverage) for
+                     raster/coverage GIS support this scenario never touches
+                     (no GeoTIFF/elevation rasters are read). Excluded because
+                     jai_imageio's native-backed CLibJPEGImageWriterSpi throws
+                     "vendorName == null!" during ImageIO SPI registration once
+                     shaded into a single fat jar - a known jai_imageio/shading
+                     conflict, confirmed locally (config/network/population all
+                     loaded fine; the crash was purely this unrelated image-
+                     codec registration, before any simulation logic ran).
+                     MATSim falls back to the JDK's own built-in pure-Java
+                     ImageIO providers for the PNG/JPEG stats plots it writes,
+                     which is all that's actually needed here. -->
+                <exclusion>
+                    <groupId>javax.media</groupId>
+                    <artifactId>jai_core</artifactId>
+                </exclusion>
+                <exclusion>
+                    <groupId>javax.media</groupId>
+                    <artifactId>jai_imageio</artifactId>
+                </exclusion>
+            </exclusions>
         </dependency>
     </dependencies>
 
     <build>
         <finalName>dhaka-matsim-run-${project.version}</finalName>
         <plugins>
-            <plugin>
-                <groupId>org.apache.maven.plugins</groupId>
-                <artifactId>maven-compiler-plugin</artifactId>
-                <version>3.11.0</version>
-                <configuration>
-                    <release>${maven.compiler.release}</release>
-                </configuration>
-            </plugin>
+            <!-- Builds a single runnable "fat" jar with all of MATSim's
+                 transitive dependencies (guava, guice, geotools, log4j,
+                 ...) bundled in, so `java -jar ...` just works without a
+                 separately-managed classpath. -->
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-shade-plugin</artifactId>
@@ -56,8 +113,24 @@
                                 <transformer implementation="org.apache.maven.plugins.shade.resource.ManifestResourceTransformer">
                                     <mainClass>org.dhaka.RunDhaka</mainClass>
                                 </transformer>
+                                <!-- MATSim uses Java's ServiceLoader for several
+                                     extension points (e.g. controler
+                                     listeners/modules); without merging
+                                     META-INF/services entries from every jar,
+                                     the shaded jar silently drops providers
+                                     from all but one dependency. -->
                                 <transformer implementation="org.apache.maven.plugins.shade.resource.ServicesResourceTransformer" />
                             </transformers>
+                            <filters>
+                                <filter>
+                                    <artifact>*:*</artifact>
+                                    <excludes>
+                                        <exclude>META-INF/*.SF</exclude>
+                                        <exclude>META-INF/*.DSA</exclude>
+                                        <exclude>META-INF/*.RSA</exclude>
+                                    </excludes>
+                                </filter>
+                            </filters>
                         </configuration>
                     </execution>
                 </executions>
