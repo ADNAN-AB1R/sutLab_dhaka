@@ -28,26 +28,29 @@ SUPPLY_FILES = {
 PCE_PATTERN = re.compile(r'pce="([0-9.eE+-]+)"')
 
 
-def scale_transit_pce(xml_text, sampling_rate):
+def scale_transit_pce(xml_text, capacity_factor):
     """vehicles_unmapped.xml (pt2matsim output) carries real-world
     passengerCarEquivalents (e.g. pce=2.8 for a bus). qsim's
-    flowCapacityFactor/storageCapacityFactor are scaled down to
-    sampling_rate for the sub-sampled population (see CONFIG_TEMPLATE), but
+    flowCapacityFactor/storageCapacityFactor are scaled down for the
+    sub-sampled population (see CONFIG_TEMPLATE - NOT to the raw
+    sampling_rate, see that module's comment for why; capacity_factor here
+    must always match whatever value flowCapacityFactor actually uses), but
     the transit fleet itself always runs at its real, full-frequency
     schedule (transit demand isn't sub-sampled - every simulated agent who
     boards pt needs a real departure to catch). Left unscaled, each transit
     vehicle consumes pce car-equivalents of a road capacity that has been
-    shrunk to sampling_rate of normal - e.g. at sampling_rate=0.01, one
-    pce=2.8 bus occupies as much of the scaled network as ~280 real cars
-    would on the unscaled network. Confirmed to be causing artificial
-    gridlock (trips stuck mid-tour in leg histograms) on the ~14k network
-    links shared by bus and car traffic. Scaling pce by sampling_rate keeps
-    every vehicle type's relative footprint (bus still "bigger" than a car)
-    while making its capacity draw consistent with the already-scaled
-    network - the standard MATSim sample-scenario fix for this."""
+    shrunk - e.g. at capacity_factor=0.1, one pce=2.8 bus occupies as much
+    of the scaled network as ~28 real cars would on the unscaled network.
+    Confirmed to be causing artificial gridlock (trips stuck mid-tour in
+    leg histograms) on the ~14k network links shared by bus and car
+    traffic when left unscaled entirely. Scaling pce by capacity_factor
+    keeps every vehicle type's relative footprint (bus still "bigger" than
+    a car) while making its capacity draw consistent with the
+    already-scaled network - the standard MATSim sample-scenario fix for
+    this."""
     def replace(match):
         original_pce = float(match.group(1))
-        return 'pce="%.6g"' % (original_pce * sampling_rate)
+        return 'pce="%.6g"' % (original_pce * capacity_factor)
     return PCE_PATTERN.sub(replace, xml_text)
 
 CONFIG_TEMPLATE = """<?xml version="1.0" ?>
@@ -128,13 +131,29 @@ CONFIG_TEMPLATE = """<?xml version="1.0" ?>
              link capacity down to match the sample fraction, otherwise a
              1% population is trying to congest a network sized for 100% of
              real Dhaka traffic and the simulation looks artificially empty.
-             Equal flow/storage factors are the common default; if early
-             runs show unrealistic gridlock/spillback (a known artifact at
-             very low sample rates, where a handful of vehicles can already
-             "fill" a short link's storage), raise storageCapacityFactor
-             above flowCapacityFactor as the first tuning step. -->
-        <param name="flowCapacityFactor" value="{sampling_rate}" />
-        <param name="storageCapacityFactor" value="{sampling_rate}" />
+
+             NOT scaled by the raw sampling_rate (0.01) - confirmed
+             empirically that this causes severe artificial gridlock (leg
+             histogram: ~16k cars permanently "en route" all day while
+             departures/arrivals never exceeded ~800). Root cause: this
+             network's median link capacity is only ~600 veh/h to begin
+             with (many 1-2 lane local/residential links), and 0.01x that
+             is ~6 veh/h - one vehicle allowed through roughly every 10
+             minutes, a hard per-link release-rate ceiling MATSim's queue
+             model enforces regardless of how few sampled vehicles actually
+             need that link across the whole day. (storageCapacityFactor
+             alone does NOT fix this - confirmed by testing at 10x its own
+             scale with flowCapacityFactor left at 0.01 and seeing the
+             identical gridlock: a vehicle rate-limited to 6/hour doesn't
+             need much queue space to cause the jam, so storage was never
+             the actual constraint.) sqrt(sampling_rate) applied to BOTH
+             factors is the standard mitigation for this at very low sample
+             rates - demand is already reduced by the full sampling_rate
+             (fewer agents), so a gentler capacity reduction keeps the
+             demand/capacity ratio congested without creating pathological
+             per-link micro-bottlenecks. -->
+        <param name="flowCapacityFactor" value="{storage_capacity_factor}" />
+        <param name="storageCapacityFactor" value="{storage_capacity_factor}" />
     </module>
 
     <!-- car is routed on the network; every other mode is teleported at a
@@ -245,34 +264,78 @@ CONFIG_TEMPLATE = """<?xml version="1.0" ?>
     </module>
 
     <!-- Runs mode choice as an in-simulation replanning strategy: every
-         time it's picked, DiscreteModeChoice re-estimates every mode
-         alternative for each trip using that iteration's ACTUAL simulated/
-         routed travel time (via matsim_run's FittedMnlTripEstimator, bound
-         under the name "Fitted" below) and the same linear-utility MNL
-         fitted in dhaka/mode_choice/estimate.py, then samples one
+         time it's picked, DiscreteModeChoice re-estimates mode for every
+         trip in a whole TOUR at once (a chain of trips between two visits
+         to "home" - modelType=Tour, tourFinder/homeFinder="ActivityBased"
+         with activityTypes="home", matching this module's own scoring
+         activityParams above), using that iteration's ACTUAL simulated/
+         routed travel time and the same linear-utility MNL fitted in
+         dhaka/mode_choice/estimate.py, then samples one candidate tour
          (MultinomialLogit selector, consistent with how the model was
          fit/applied elsewhere - not a deterministic argmax). This replaces
          the old behavior where dhaka/synthesis/population/mode_choice.py's
          one-shot synthesis-time assignment was frozen for the whole run;
-         that stage's output is now only the INITIAL seed plan. modelType
-         is Trip (not Tour) because the fitted model is trip-level - no
-         tour-finding/vehicle-continuity constraints are configured, a
-         known simplification already shared by every other non-car mode
-         being teleported rather than network-routed. modeAvailability
-         "Car" gates the car alternative by the population's existing
-         hasLicense/carAvailability person attributes (confirmed via the
-         actual matsim-core jar: PersonUtils.getLicense() reads the
-         "hasLicense" attribute key, which dhaka/matsim/scenario/
-         population.py already writes) - every other mode here has no
-         such constraint in Dhaka (rickshaw/paratransit need no license). -->
+         that stage's output is now only the INITIAL seed plan.
+
+         tourEstimator="Cumulative" is a built-in DMC component that sums
+         a TripEstimator's per-trip utilities across a tour's trips to
+         score whole-tour candidates - confirmed by decompiling the actual
+         jar (EstimatorModule.provideCumulativeTourEstimator), it delegates
+         to whatever tripEstimator is configured (still "Fitted" -
+         matsim_run's FittedMnlTripEstimator, unchanged from the trip-based
+         setup: it stays a pure per-trip estimator, Cumulative is what
+         makes it usable at tour level, no new Java class needed).
+
+         tourConstraints="VehicleContinuity" (restrictedModes="car" below)
+         requires the SAME car a tour departs "home" with to be the one
+         that returns - this is what tour-based conversion is actually for,
+         closing the trip-based version's known gap (an agent could
+         previously drive to work and bus home, stranding the car). Only
+         car is restricted, deliberately not the stricter built-in
+         "SubtourMode" constraint (which forces one mode for an entire
+         tour) - that would suppress the per-trip mode variation the
+         fitted model is designed to produce (e.g. rickshaw to a nearby
+         shop mid-tour, bus the rest of the way home), and the only
+         physical resource actually requiring continuity is the car
+         itself. modeAvailability "Car" gates the car alternative by the
+         population's existing hasLicense/carAvailability person
+         attributes (confirmed via the actual matsim-core jar:
+         PersonUtils.getLicense() reads the "hasLicense" attribute key,
+         which dhaka/matsim/scenario/population.py already writes) - every
+         other mode here has no such constraint in Dhaka (rickshaw/
+         paratransit need no license).
+
+         cachedModes matters a lot more here than it would for trip-based:
+         tour-based candidate enumeration evaluates many trip x mode
+         combinations per agent (a whole tour's worth), each estimated via
+         FittedMnlTripEstimator, which does a REAL TripRouter routing call
+         per candidate - without caching, the same (trip, mode) pair gets
+         re-routed from scratch every time it recurs across different tour
+         candidates. Confirmed empirically to matter: without cachedModes,
+         a single replanning pass over ~35k plans stalled for 40+ minutes
+         near the JVM heap ceiling instead of completing. Wraps
+         FittedMnlTripEstimator in DMC's built-in CachedTripEstimator for
+         every mode. -->
     <module name="DiscreteModeChoice">
-        <param name="modelType" value="Trip" />
+        <param name="modelType" value="Tour" />
         <param name="tripEstimator" value="Fitted" />
+        <param name="tourEstimator" value="Cumulative" />
         <param name="selector" value="MultinomialLogit" />
         <param name="modeAvailability" value="Car" />
+        <param name="tourConstraints" value="VehicleContinuity" />
+        <param name="cachedModes" value="walk,bike,car,pt,rickshaw,paratransit" />
 
         <parameterset type="modeAvailability:Car">
             <param name="availableModes" value="walk,bike,car,pt,rickshaw,paratransit" />
+        </parameterset>
+        <parameterset type="tourFinder:ActivityBased">
+            <param name="activityTypes" value="home" />
+        </parameterset>
+        <parameterset type="homeFinder:ActivityBased">
+            <param name="activityTypes" value="home" />
+        </parameterset>
+        <parameterset type="tourConstraint:VehicleContinuity">
+            <param name="restrictedModes" value="car" />
         </parameterset>
     </module>
 
@@ -340,6 +403,7 @@ def execute(context):
     # Supply side: pre-built externally via pt2matsim, just copy in
     supply_base = "%s/%s" % (context.config("data_path"), context.config("dhaka.matsim_supply_path"))
     sampling_rate = context.config("sampling_rate")
+    capacity_factor = sampling_rate ** 0.5
 
     for target_name, source_name in SUPPLY_FILES.items():
         source_path = "%s/%s" % (supply_base, source_name)
@@ -351,11 +415,13 @@ def execute(context):
             )
 
         if target_name == "transit_vehicles.xml.gz":
-            # Scale passengerCarEquivalents to sampling_rate - see
-            # scale_transit_pce's docstring for why the raw pt2matsim output
-            # can't be used as-is for a sub-sampled scenario.
+            # Scale passengerCarEquivalents to match flowCapacityFactor
+            # (capacity_factor, NOT the raw sampling_rate - see
+            # scale_transit_pce's docstring and the qsim module's comment
+            # in CONFIG_TEMPLATE for why) so bus-vs-car relative capacity
+            # draw stays consistent with the actual scaled network.
             with open(source_path, "r", encoding = "utf-8") as f_in:
-                xml_text = scale_transit_pce(f_in.read(), sampling_rate)
+                xml_text = scale_transit_pce(f_in.read(), capacity_factor)
             with gzip.open(destination_path, "wt", encoding = "utf-8") as f_out:
                 f_out.write(xml_text)
         elif source_name.endswith(".gz"):
@@ -372,6 +438,7 @@ def execute(context):
         random_seed = context.config("random_seed"),
         processes = context.config("processes"),
         sampling_rate = sampling_rate,
+        storage_capacity_factor = sampling_rate ** 0.5,
         simulation_output_dir = context.config("simulation_output_dir"),
         last_iteration = context.config("matsim_last_iteration"),
     )

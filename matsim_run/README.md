@@ -124,8 +124,12 @@ java -jar ../matsim_run/target/dhaka-matsim-run-1.0.jar dhaka_1pct_config_smoket
 Expect this to finish in well under a minute. Success looks like the log
 ending with `S H U T D O W N --- shutdown completed` with **no** "unexpected
 shutdown" error above it, and `simulation_output_smoketest/modestats.csv`
-existing with two rows (iteration 0 and 1, identical mode shares — expected,
-since mode isn't dynamically re-chosen).
+existing with two rows (iteration 0 and 1) — shares may already differ
+slightly between them even after just one iteration, since `DiscreteModeChoice`
+has nonzero weight in `replanning` and mode is dynamically re-chosen (see
+"In-simulation mode choice" below); a 1-iteration smoke test is too short to
+judge whether that movement looks reasonable, it's just checking nothing
+crashed.
 
 **Clean up afterward** — even a 1-iteration run writes a full
 `simulation_output_smoketest/` directory (events, plans, network, plots;
@@ -152,13 +156,23 @@ java -jar D:\MatSim\sutLab\sutLab_dhaka\matsim_run\target\dhaka-matsim-run-1.0.j
 
 ```bash
 cd output
-java -jar ../matsim_run/target/dhaka-matsim-run-1.0.jar dhaka_1pct_config.xml
+java -Xmx8g -jar ../matsim_run/target/dhaka-matsim-run-1.0.jar dhaka_1pct_config.xml
 ```
 
 ```powershell
 Set-Location D:\MatSim\sutLab\sutLab_dhaka\output
-java -jar D:\MatSim\sutLab\sutLab_dhaka\matsim_run\target\dhaka-matsim-run-1.0.jar dhaka_1pct_config.xml
+java -Xmx8g -jar D:\MatSim\sutLab\sutLab_dhaka\matsim_run\target\dhaka-matsim-run-1.0.jar dhaka_1pct_config.xml
 ```
+
+**`-Xmx8g` (or higher, adjust to your machine's free RAM) matters now that
+`DiscreteModeChoice` is tour-based** — tour-level candidate enumeration is
+much more memory-hungry than the earlier trip-based setup (evaluates many
+trip×mode combinations per agent per replanning pass, not one trip at a
+time). Confirmed empirically: without it, the default JVM heap (~1/4 of
+system RAM) caused a single replanning pass to stall for 40+ minutes near
+the heap ceiling instead of completing. `cachedModes` in `CONFIG_TEMPLATE`
+(see the `DiscreteModeChoice` module) helps too, but doesn't remove the
+need for extra heap.
 
 This runs the full `lastIteration` from `config.xml`. Expect this to take
 substantially longer than the 1-iteration smoke test — run it detached or
@@ -207,13 +221,23 @@ Relevant classes:
   `DhakaModeChoiceExtension`, and (important, easy to miss) pre-registers
   `DiscreteModeChoiceConfigGroup` when loading `config.xml`.
 
-Trip-based, not tour-based (`modelType=Trip`): matches the fitted model's
-own granularity (one independent choice per trip), and avoids the added
-complexity of tour-finding + vehicle-continuity constraints tour-based DMC
-needs. Known simplification, shared with the rest of this scenario: an
-agent could in principle drive to work and bus home, stranding the car —
-same caliber of simplification as every non-car mode already being
-teleported rather than network-routed.
+**Tour-based** (`modelType=Tour`): a tour is the chain of trips between two
+visits to a `home` activity (`tourFinder`/`homeFinder` both
+`"ActivityBased"`, `activityTypes="home"` — matches the `scoring` module's
+`activityParams`). `FittedMnlTripEstimator` itself didn't need to change —
+it stays a pure per-trip estimator; `tourEstimator="Cumulative"` is a
+built-in DMC component (confirmed by decompiling the jar) that sums a
+`TripEstimator`'s per-trip utilities across a tour to score whole-tour
+candidates, delegating to whatever `tripEstimator` is configured (still
+`"Fitted"`). `tourConstraints="VehicleContinuity"`
+(`restrictedModes="car"`) requires the same car a tour leaves `home` with
+to be the one that returns — this closes the one real gap the earlier
+trip-based version had (an agent could drive to work and bus home,
+stranding the car). Deliberately *not* the stricter built-in `SubtourMode`
+constraint, which forces one mode for an entire tour — that would suppress
+the per-trip mode variation (e.g. rickshaw to a nearby shop mid-tour, bus
+the rest of the way home) the fitted model is designed to produce; car is
+the only mode where physical vehicle continuity actually matters here.
 
 ### Three Guice wiring issues, already fixed (don't reintroduce)
 
@@ -261,7 +285,14 @@ enough iterations to reconverge, regenerate `modestats.csv`, run the
 calibration script again, repeat until each mode's simulated share is
 within tolerance (e.g. ±2 percentage points) of target.
 
-As of the last calibration round run in this project: `bike`, `rickshaw`,
+**Re-run calibration after any `DiscreteModeChoice` config change** (e.g.
+the trip→tour-based switch) — different candidate generation/constraints
+shift simulated mode-share dynamics, so ASCs calibrated under one setup
+aren't guaranteed to still be well-calibrated under another.
+
+As of the last calibration round run in this project (trip-based,
+pre-dating the tour-based switch above — treat as a starting point, not a
+current result): `bike`, `rickshaw`,
 `paratransit`, `pt`, and `walk` are within a few points of their HTS
 targets; `car` is still converging (needed the largest ASC swing of any
 mode — real routed car travel time appears to penalize car much more than
@@ -275,8 +306,9 @@ before treating simulated mode shares as final.
 - **Non-car, non-pt modes are teleported**, not network-routed (walk, bike,
   rickshaw, paratransit) — see the `routing` module in `CONFIG_TEMPLATE`.
   Real congestion/interaction effects for these modes aren't captured.
-- **DiscreteModeChoice is trip-based**, so vehicle continuity across a
-  tour isn't enforced (see above).
+- **`VehicleContinuity` only restricts `car`**, not other modes — deliberate
+  (see above), but worth knowing if you ever see e.g. a rickshaw used
+  inconsistently within a tour; that's expected, not a bug.
 - **pt routing depends on SwissRailRaptor's intermodal access/egress**
   (walk + rickshaw to reach a stop) — raised real trip-level pt routing
   success from 51% to 71.5% on a 1% sample when added, but isn't 100%; some
