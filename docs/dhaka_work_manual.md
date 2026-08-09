@@ -1,3 +1,21 @@
+Run command (from output/, using the real production config — already has all the fixes: capacity scaling, transit pce scaling, tour-based DiscreteModeChoice with caching + the TourLength filter):
+
+
+cd d:/MatSim/sutLab/sutLab_dhaka/output
+java -Xmx8g -jar ../matsim_run/target/dhaka-matsim-run-1.0.jar dhaka_1pct_config.xml
+PowerShell equivalent:
+
+
+Set-Location D:\MatSim\sutLab\sutLab_dhaka\output
+java -Xmx8g -jar D:\MatSim\sutLab\sutLab_dhaka\matsim_run\target\dhaka-matsim-run-1.0.jar dhaka_1pct_config.xml
+Notes for when you pick this back up:
+
+-Xmx8g matters now — tour-based DMC needs more heap than the old trip-based setup did.
+Current lastIteration in that config — check it before running (grep lastIteration dhaka_1pct_config.xml), since it's whatever matsim_last_iteration was last set to in config_dhaka.yml.
+Output lands in output/simulation_output/ (deletes/overwrites any existing one there — overwriteFiles=deleteDirectoryIfExists).
+At the last confirmed pace (~6-7 min/iteration), a 15-iteration run is roughly 1.5-2 hours.
+Scratch test files (simulation_output_tourtest5/, dhaka_1pct_config_tourtest5.xml) are still sitting in output/ from this session — let me know if you want those cleaned up now or left for reference.
+
 # Dhaka Pipeline — Work Manual
 
 Quick operational reference. For troubleshooting/background, see

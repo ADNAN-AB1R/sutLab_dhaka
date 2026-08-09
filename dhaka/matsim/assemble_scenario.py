@@ -315,7 +315,23 @@ CONFIG_TEMPLATE = """<?xml version="1.0" ?>
          a single replanning pass over ~35k plans stalled for 40+ minutes
          near the JVM heap ceiling instead of completing. Wraps
          FittedMnlTripEstimator in DMC's built-in CachedTripEstimator for
-         every mode. -->
+         every mode.
+
+         tourFilters="TourLength" (maximumLength=6 below) excludes tours
+         with more than 6 trips from DMC replanning entirely - their mode
+         stays whatever the seed plan assigned, never dynamically
+         re-optimized. Confirmed empirically necessary, not precautionary:
+         analysis of the actual population found ~95% of tours have just 2
+         trips (a simple out-and-back), but a long tail goes up to 14
+         trips in a single tour - and tour-based candidate enumeration is
+         combinatorial in trips-per-tour, so those rare long tours (~0.06%
+         of all tours, confirmed by direct count) were dominating
+         replanning wall-clock time by orders of magnitude versus the
+         other 99.94%. 6 was chosen as the cutoff because the population's
+         own trip-count distribution has a natural break there (2/3/4 trips
+         are common; 7+ is rare and where cost explodes) - excluding that
+         thin tail trades a negligible loss of dynamic optimization
+         coverage for tour-based DMC actually being tractable to run. -->
     <module name="DiscreteModeChoice">
         <param name="modelType" value="Tour" />
         <param name="tripEstimator" value="Fitted" />
@@ -323,10 +339,14 @@ CONFIG_TEMPLATE = """<?xml version="1.0" ?>
         <param name="selector" value="MultinomialLogit" />
         <param name="modeAvailability" value="Car" />
         <param name="tourConstraints" value="VehicleContinuity" />
+        <param name="tourFilters" value="TourLength" />
         <param name="cachedModes" value="walk,bike,car,pt,rickshaw,paratransit" />
 
         <parameterset type="modeAvailability:Car">
             <param name="availableModes" value="walk,bike,car,pt,rickshaw,paratransit" />
+        </parameterset>
+        <parameterset type="tourFilter:TourLength">
+            <param name="maximumLength" value="6" />
         </parameterset>
         <parameterset type="tourFinder:ActivityBased">
             <param name="activityTypes" value="home" />
