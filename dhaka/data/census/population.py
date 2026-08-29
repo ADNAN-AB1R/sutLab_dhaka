@@ -39,17 +39,17 @@ def configure(context):
 def execute(context):
     EXCEL_PATH = f"{context.config('data_path')}/{context.config('dhaka.census')}"
 
-    df = pd.read_excel(EXCEL_PATH, sheet_name = "Merged_All_Table")
-    df_district = df[df["District"] == DISTRICT]
+    df = pd.read_excel(EXCEL_PATH, sheet_name=  "Merged_All_Table") # Total dataframe contains merged_all_table sheet from census excel file
+    df_district = df[df["District"] == DISTRICT] # Pull dhaka in df_district
 
     if len(df_district) != 1:
-        raise RuntimeError(f"Expected exactly one '{DISTRICT}' row in the BBS census, found {len(df_district)}")
+        raise RuntimeError(f"Expected exactly one '{DISTRICT}' row in the BBS census, found {len(df_district)}") # Need to be only Dhaka
 
     row = df_district.iloc[0]
 
     summary = {
         "district": DISTRICT,
-        "population_total": row["Population_Total"],
+        "population_total": row["Population_Total"], # takes in pop total
         "population_male": row["Population by Sex, Dist & Loca_Population_Male_#"],
         "population_female": row["Population by Sex, Dist & Loca_Population_Female_#"],
         "household_total": row["Household_Total"],
@@ -58,7 +58,7 @@ def execute(context):
         "employed_female": row["Overall_Employed_Working_Status_5 Year+_Female_#"],
     }
 
-    household_size_shares = {}
+    household_size_shares = {} 
     for column, bucket in HOUSEHOLD_SIZE_COLUMNS.items():
         if bucket == "total_households":
             continue

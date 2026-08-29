@@ -39,6 +39,20 @@ def parse_purpose(text):
 # as their own categories since they carry a large, structurally distinct share
 # of Dhaka trips - fold them into "pt"/"car" instead if the mode choice model
 # downstream needs to stick to the standard eqasim mode set.
+#
+# MOTORCYCLE is deliberately its own mode, NOT folded into "car". Confirmed
+# from the raw survey: motorcycles are 16,323 trips vs private car's 6,045 -
+# i.e. lumping them together produces a bucket that is 64% motorcycle but was
+# being given private car's behaviour, cost and alternative-specific constant.
+# The mode-choice model this pipeline uses (Hoque MSc thesis - see
+# dhaka/mode_choice/dhaka_mode_parameters.json) estimates Private Motorcycle
+# (ASC 1.87) and Private Car (ASC 3.09) as genuinely separate alternatives,
+# and their operating costs differ ~3x (122 BDT/l over ~35 km/l vs ~12 km/l).
+# All three motorcycle variants (incl. ride-share/Pathao) are grouped together
+# because on the network they are physically the same vehicle - speed, fuel
+# cost and road behaviour - even though the thesis prices ride-share bike as a
+# separate, much less attractive alternative (that difference is carried in
+# the bucket's share-weighted ASC instead; see dhaka_mode_parameters.json).
 MODES_MAP = {
     "Walking": "walk",
     "Bicycle": "bike",
@@ -46,9 +60,9 @@ MODES_MAP = {
     "Private car /Microbus/ Jeep etc. (drive by driver)": "car",
     "Private car /Microbus/ Jeep etc. (self-driven)": "car",
     "Private car /Microbus/ Jeep etc. (drive by friends and family)": "car",
-    "Motorcycle (self-driven)": "car",
-    "Motorcycle (drive by friends and family)": "car",
-    "Motorcycle (ride sharing, i.e., UBER, Pathao, etc.)": "car",
+    "Motorcycle (self-driven)": "motorcycle",
+    "Motorcycle (drive by friends and family)": "motorcycle",
+    "Motorcycle (ride sharing, i.e., UBER, Pathao, etc.)": "motorcycle",
     "Taxi/ Private car /Microbus/ Jeep etc. (ride sharing, i.e., UBER, Pathao, etc.)": "car",
     "Staff vehicles car/ Microbus": "car",
     "Assaigned vehicles by the company": "car",
@@ -89,7 +103,11 @@ INCOME_BRACKETS = [
 # all for the destination (see note in calculate_trip_distance below).
 FALLBACK_SPEED_KMH = {
     "walk": 4.0, "bike": 10.0, "rickshaw": 10.0,
-    "paratransit": 15.0, "pt": 18.0, "car": 22.0, "other": 15.0,
+    "paratransit": 15.0, "pt": 18.0, "car": 22.0,
+    # Slightly faster than car: Dhaka motorcycles filter through stationary
+    # traffic rather than queueing in it.
+    "motorcycle": 25.0,
+    "other": 15.0,
 }
 
 TIME_PATTERN = re.compile(r"(\d{1,2}):(\d{2}):?(\d{2})?\s*(am|pm)?", re.IGNORECASE)

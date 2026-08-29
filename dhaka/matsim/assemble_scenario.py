@@ -181,6 +181,16 @@ CONFIG_TEMPLATE = """<?xml version="1.0" ?>
             <param name="teleportedModeSpeed" value="2.8" />
             <param name="beelineDistanceFactor" value="1.3" />
         </parameterset>
+        <!-- 6.9 m/s = ~25 km/h, slightly faster than the car_passenger
+             teleport speed: Dhaka motorcycles filter through stationary
+             traffic rather than queueing in it, so teleporting them is
+             arguably closer to reality than network-routing them as cars
+             would be (they are NOT in networkModes above for that reason). -->
+        <parameterset type="teleportedModeParameters">
+            <param name="mode" value="motorcycle" />
+            <param name="teleportedModeSpeed" value="6.9" />
+            <param name="beelineDistanceFactor" value="1.3" />
+        </parameterset>
         <parameterset type="teleportedModeParameters">
             <param name="mode" value="paratransit" />
             <param name="teleportedModeSpeed" value="4.2" />
@@ -252,6 +262,11 @@ CONFIG_TEMPLATE = """<?xml version="1.0" ?>
             <param name="constant" value="0.0" />
         </parameterset>
         <parameterset type="modeParams">
+            <param name="mode" value="motorcycle" />
+            <param name="marginalUtilityOfTraveling_util_hr" value="-6.0" />
+            <param name="constant" value="0.0" />
+        </parameterset>
+        <parameterset type="modeParams">
             <param name="mode" value="paratransit" />
             <param name="marginalUtilityOfTraveling_util_hr" value="-6.0" />
             <param name="constant" value="0.0" />
@@ -269,22 +284,27 @@ CONFIG_TEMPLATE = """<?xml version="1.0" ?>
          to "home" - modelType=Tour, tourFinder/homeFinder="ActivityBased"
          with activityTypes="home", matching this module's own scoring
          activityParams above), using that iteration's ACTUAL simulated/
-         routed travel time and the same linear-utility MNL fitted in
-         dhaka/mode_choice/estimate.py, then samples one candidate tour
-         (MultinomialLogit selector, consistent with how the model was
-         fit/applied elsewhere - not a deterministic argmax). This replaces
-         the old behavior where dhaka/synthesis/population/mode_choice.py's
-         one-shot synthesis-time assignment was frozen for the whole run;
-         that stage's output is now only the INITIAL seed plan.
+         routed travel time and the same mode-choice model estimated in
+         Hoque's MSc thesis (paper/Ismamul Hoque Msc Thesis.pdf, Table 4.1 -
+         U = asc[mode] + beta_duration*time + beta_fare*fare; see
+         matsim_run/README.md's "In-simulation mode choice" section and
+         dhaka/mode_choice/dhaka_mode_parameters.json), then samples one
+         candidate tour (MultinomialLogit selector, consistent with how the
+         model was fit/applied elsewhere - not a deterministic argmax).
+         This replaces the old behavior where dhaka/synthesis/population/
+         mode_choice.py's one-shot synthesis-time assignment was frozen for
+         the whole run; that stage's output is now only the INITIAL seed
+         plan.
 
          tourEstimator="Cumulative" is a built-in DMC component that sums
          a TripEstimator's per-trip utilities across a tour's trips to
          score whole-tour candidates - confirmed by decompiling the actual
          jar (EstimatorModule.provideCumulativeTourEstimator), it delegates
          to whatever tripEstimator is configured (still "Fitted" -
-         matsim_run's FittedMnlTripEstimator, unchanged from the trip-based
-         setup: it stays a pure per-trip estimator, Cumulative is what
-         makes it usable at tour level, no new Java class needed).
+         matsim_run's org.dhaka.mode_choice.DhakaTripEstimator, unchanged
+         from the trip-based setup: it stays a pure per-trip estimator,
+         Cumulative is what makes it usable at tour level, no new Java
+         class needed for tour-level scoring itself).
 
          tourConstraints="VehicleContinuity" (restrictedModes="car" below)
          requires the SAME car a tour departs "home" with to be the one
@@ -294,7 +314,7 @@ CONFIG_TEMPLATE = """<?xml version="1.0" ?>
          car is restricted, deliberately not the stricter built-in
          "SubtourMode" constraint (which forces one mode for an entire
          tour) - that would suppress the per-trip mode variation the
-         fitted model is designed to produce (e.g. rickshaw to a nearby
+         model is designed to produce (e.g. rickshaw to a nearby
          shop mid-tour, bus the rest of the way home), and the only
          physical resource actually requiring continuity is the car
          itself. modeAvailability "Car" gates the car alternative by the
@@ -308,13 +328,13 @@ CONFIG_TEMPLATE = """<?xml version="1.0" ?>
          cachedModes matters a lot more here than it would for trip-based:
          tour-based candidate enumeration evaluates many trip x mode
          combinations per agent (a whole tour's worth), each estimated via
-         FittedMnlTripEstimator, which does a REAL TripRouter routing call
+         DhakaTripEstimator, which does a REAL TripRouter routing call
          per candidate - without caching, the same (trip, mode) pair gets
          re-routed from scratch every time it recurs across different tour
          candidates. Confirmed empirically to matter: without cachedModes,
          a single replanning pass over ~35k plans stalled for 40+ minutes
          near the JVM heap ceiling instead of completing. Wraps
-         FittedMnlTripEstimator in DMC's built-in CachedTripEstimator for
+         DhakaTripEstimator in DMC's built-in CachedTripEstimator for
          every mode.
 
          tourFilters="TourLength" (maximumLength=6 below) excludes tours
@@ -340,10 +360,10 @@ CONFIG_TEMPLATE = """<?xml version="1.0" ?>
         <param name="modeAvailability" value="Car" />
         <param name="tourConstraints" value="VehicleContinuity" />
         <param name="tourFilters" value="TourLength" />
-        <param name="cachedModes" value="walk,bike,car,pt,rickshaw,paratransit" />
+        <param name="cachedModes" value="walk,bike,car,motorcycle,pt,rickshaw,paratransit" />
 
         <parameterset type="modeAvailability:Car">
-            <param name="availableModes" value="walk,bike,car,pt,rickshaw,paratransit" />
+            <param name="availableModes" value="walk,bike,car,motorcycle,pt,rickshaw,paratransit" />
         </parameterset>
         <parameterset type="tourFilter:TourLength">
             <param name="maximumLength" value="6" />

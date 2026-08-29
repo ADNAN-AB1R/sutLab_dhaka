@@ -102,6 +102,7 @@ def execute(context):
         "pt": 0,
         "car": 0,
         "car_passenger": 0,
+        "motorcycle": 0,
         "rickshaw": 0,
         "paratransit": 0,
         "other": 0,
@@ -201,6 +202,7 @@ def process_hoerl(context, arguments):
   thresholds = dict(
     car = 200.0, car_passenger = 200.0, pt = 200.0,
     bike = 100.0, walk = 100.0,
+    motorcycle = 200.0,
     rickshaw = 100.0, paratransit = 200.0, other = 200.0,
   )
 

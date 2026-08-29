@@ -56,25 +56,30 @@ python -m synpp config_dhaka.yml --target dhaka.matsim.assemble_scenario
 ```
 
 Run this after **any** change to `dhaka/matsim/assemble_scenario.py`,
-`config_dhaka.yml`, or `dhaka/mode_choice/fitted_coefficients.json` — it
+`config_dhaka.yml`, or `dhaka/mode_choice/dhaka_mode_parameters.json` — it
 regenerates `output/dhaka_1pct_config.xml` and the demand/supply files.
 `synpp` caches unchanged stages, so this is incremental, not a full re-run.
 
 Key `config_dhaka.yml` settings: `sampling_rate`, `random_seed`,
 `matsim_last_iteration`, `output_path`/`output_prefix`.
 
-## 3. (Re)fit the mode-choice model
+## 3. The mode-choice model
 
-Only needed if `dhaka/mode_choice/fitted_coefficients.json` is missing or
-the underlying HTS estimation dataset changes:
+`dhaka/mode_choice/dhaka_mode_parameters.json` is the current, authoritative
+mode-choice model — ASCs and shared `beta_duration`/`beta_fare` estimated in
+Hoque's MSc thesis (`paper/Ismamul Hoque Msc Thesis.pdf`, Table 4.1), plus
+the scenario's fare-construction assumptions per mode. Nothing needs to be
+(re-)fit — there's no estimation step, it's a static file consumed directly
+by both the Python seed assignment and the Java DMC estimator. See
+`matsim_run/README.md`'s "In-simulation mode choice" section for the full
+formula, units verification, and package layout
+(`matsim_run/src/main/java/org/dhaka/mode_choice/`).
 
-```bash
-python -m dhaka.mode_choice.estimate
-```
-
-Writes `dhaka/mode_choice/fitted_coefficients.json` from
-`dhaka/mode_choice/cache_estimation_dataset.parquet`. Prints a predicted-
-vs-observed mode share sanity check — should match closely at convergence.
+`dhaka/mode_choice/estimate.py` + `fitted_coefficients.json` are the
+project's **earlier** approach (an MNL fit directly from
+`cache_estimation_dataset.parquet`, our own 274,946-trip DTCA HTS sample) —
+currently unused/superseded, kept as reference in case a locally-fitted
+model is wanted again later, not deleted.
 
 ## 4. Build the MATSim runner
 
@@ -107,13 +112,18 @@ A real run takes a long time — run detached/backgrounded.
 
 ## 6. Calibrate mode-choice ASCs
 
+**Not optional.** The thesis's published ASCs were estimated on commute-only
+trips and do not reproduce Dhaka's all-trip mode split out of the box (walk
+~1% modelled vs ~33% observed). See `matsim_run/README.md`'s calibration
+section for why.
+
 After a real (multi-iteration) run completes:
 
 ```bash
 python -m dhaka.mode_choice.calibrate_asc output/simulation_output/modestats.csv
 ```
 
-Updates `fitted_coefficients.json`'s ASCs in place — picked up fresh on
+Updates `dhaka_mode_parameters.json`'s ASCs in place — picked up fresh on
 the next MATSim run, **no rebuild needed**. This closes the gap between
 HTS-observed mode shares and what the simulation converges to. It's
 iterative: run → calibrate → run → calibrate, until each mode's simulated
@@ -141,11 +151,13 @@ be roughly flat/converged before calibrating against them).
 |---|---|
 | `config_dhaka.yml` | Master pipeline config |
 | `dhaka/matsim/assemble_scenario.py` | Builds `config.xml`, copies demand/supply files |
-| `dhaka/mode_choice/estimate.py` | Fits the MNL mode-choice model |
-| `dhaka/mode_choice/fitted_coefficients.json` | Fitted model — consumed by both the Python synthesis stage and the Java DMC estimator |
+| `paper/Ismamul Hoque Msc Thesis.pdf` | Source of the current mode-choice model's coefficients (Table 4.1) |
+| `dhaka/mode_choice/dhaka_mode_parameters.json` | Current mode-choice model — ASCs, `beta_duration`/`beta_fare`, fare-construction assumptions; consumed by both the Python synthesis stage and the Java DMC estimator |
 | `dhaka/mode_choice/calibrate_asc.py` | ASC calibration against HTS targets |
-| `dhaka/synthesis/population/mode_choice.py` | Applies the fitted model once at synthesis time (initial seed plan) |
-| `matsim_run/src/main/java/org/dhaka/` | MATSim runner + `discrete_mode_choice` integration |
+| `dhaka/mode_choice/estimate.py` + `fitted_coefficients.json` | Earlier HTS-fitted model — currently unused/superseded, kept as reference |
+| `dhaka/synthesis/population/mode_choice.py` | Applies the current model once at synthesis time — feeds `output/dhaka_1pct_trips.csv` only, **not** `population.xml` (MATSim is seeded with HTS-donor modes; see `matsim_run/README.md`) |
+| `matsim_run/src/main/java/org/dhaka/mode_choice/` | The mode-choice model in Java (mirrors eqasim-java's per-city package layout) — used every MATSim iteration |
+| `matsim_run/src/main/java/org/dhaka/RunDhaka.java` | MATSim runner entry point + `discrete_mode_choice` wiring |
 | `matsim_run/README.md` | Detailed MATSim run/troubleshooting reference |
 
 ## 9. Common mistakes

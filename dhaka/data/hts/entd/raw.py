@@ -14,7 +14,7 @@ mobility, and the rest are only known by age/sex), the DTCA survey already lists
 every household member with real age/sex/employment/education/driving-license
 data (sheets "all hh members" / "individual hh member"). So there is no need for
 Bernoulli-imputation of non-respondent household members - `raw.py` here directly
-returns a full person roster, and no `household_members` stage chain is needed.
+returns a full person details, and no `household_members` stage chain is needed.
 """
 
 STUDY_AREA_UPAZILAS = [
@@ -89,7 +89,7 @@ def execute(context):
     df_households["number_of_vehicles"] = df_households["number_of_vehicles"].fillna(0)
 
     # ------------------------------------------------------------------
-    # Persons: start from the full member roster, then bring in employment /
+    # Persons: start from the full member details, then bring in employment /
     # education / observed work-and-school-location detail
 
     df_persons = df_members.rename(columns = {

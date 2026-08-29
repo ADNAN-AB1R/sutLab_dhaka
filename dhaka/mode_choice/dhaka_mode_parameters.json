@@ -1,0 +1,94 @@
+{
+  "modes": ["bike", "car", "motorcycle", "pt", "rickshaw", "paratransit", "walk"],
+  "reference_mode": "bike",
+  "beta_duration_per_minute": -0.112,
+  "beta_fare_per_bdt": -0.034,
+  "asc": {
+    "car": 2.955,
+    "motorcycle": 1.758,
+    "pt": 1.28,
+    "rickshaw": 2.27,
+    "paratransit": 3.31,
+    "walk": 0.87
+  },
+  "source": "Hoque, Ismamul - MSc Thesis (paper/Ismamul Hoque Msc Thesis.pdf), Table 4.1 mode choice component (12-alternative MNL, bicycle reference, 927 observations, GAUSS MAXLIK). Thesis ASCs: Bicycle(ref)=0.00, Bus=1.28***, MRT=1.37***, CNG=3.31***, Office Vehicle=1.20**, Ride-share Bike=-0.03(ns), Ride-share Car=4.60***, Rickshaw=2.27***, Lagoona=-0.502(ns), Private Motorcycle=1.87***, Private Car=3.09***, Walk=0.87*. beta_duration/beta_fare are pooled across all 12 alternatives in the thesis, not mode-specific. Units confirmed (not assumed) via the thesis's own stated VTTS: (0.112/0.034)*60 = 197.6 BDT/hr matches the thesis's reported ~200 BDT/hr only if duration is in MINUTES and fare is in raw BDT (not thousands).",
+  "mode_mapping": {
+    "note": "The thesis has 12 alternatives; this scenario simulates 7 modes. Where one of our modes is a COMPOSITE of several thesis alternatives, its ASC is the share-weighted average of the constituent thesis ASCs, weighted by that group's actual raw DTCA HTS trip counts (see 'composition' fields below) - NOT simply one constituent's ASC. Ratios are from the raw survey (raw_data/Dhaka/hts/dtca_full.xlsx, sheet 'trip info', column q61_trip_mode). Still not simulated separately: MRT (our transit schedule has no metro line at all - every one of its 154 lines is transportMode=bus, so there is nothing to route MRT on; also only 154 raw MRT trips, survey ran just after the first line opened), Train/Boat/Water Taxi/Ferry (folded into pt, ~1.4% of the pt bucket, not in the thesis either), Truck/Pickup (folded into car, 309 trips, not in the thesis either).",
+    "bike": "Bicycle (reference) - clean 1:1 with thesis",
+    "rickshaw": "Rickshaw - clean 1:1 with thesis",
+    "paratransit": "CNG auto-rickshaw - clean 1:1 with thesis (our bucket is exactly the 3-wheeler Auto/CNG shared+reserved variants)",
+    "walk": "Walk - clean 1:1 with thesis",
+    "motorcycle": "COMPOSITE: Private Motorcycle + Ride-share Bike",
+    "car": "COMPOSITE: Private Car + Ride-share Car + Office Vehicle (+ Truck/Pickup, not in thesis)",
+    "pt": "COMPOSITE: Bus + Lagoona + MRT + school/staff buses (+ train/boat/water taxi, not in thesis)"
+  },
+  "composition": {
+    "note": "Raw DTCA HTS trip counts behind each composite bucket's share-weighted ASC, for auditability. Trips whose thesis alternative does not exist (Truck/Pickup, train/boat/water taxi) are excluded from the weighting but still simulated in that bucket.",
+    "motorcycle": {
+      "weighted_asc": 1.758,
+      "parts": [
+        { "thesis_alternative": "Private Motorcycle", "asc": 1.87, "raw_trips": 15357, "share": 0.941 },
+        { "thesis_alternative": "Ride-share Bike", "asc": -0.03, "raw_trips": 966, "share": 0.059 }
+      ],
+      "rationale": "All motorcycle variants are grouped because on the network they are physically the same vehicle (speed, fuel cost, filtering behaviour). The thesis's much lower ride-share bike ASC is carried through the share weighting rather than by simulating it separately."
+    },
+    "car": {
+      "weighted_asc": 2.955,
+      "parts": [
+        { "thesis_alternative": "Private Car", "asc": 3.09, "raw_trips": 6045, "share": 0.832 },
+        { "thesis_alternative": "Ride-share Car", "asc": 4.60, "raw_trips": 391, "share": 0.054 },
+        { "thesis_alternative": "Office Vehicle", "asc": 1.20, "raw_trips": 830, "share": 0.114 }
+      ]
+    },
+    "pt": {
+      "weighted_asc_if_recomputed": 1.023,
+      "asc_currently_used": 1.28,
+      "parts": [
+        { "thesis_alternative": "Bus", "asc": 1.28, "raw_trips": 30484, "share": 0.790 },
+        { "thesis_alternative": "Lagoona", "asc": -0.502, "raw_trips": 5461, "share": 0.141 },
+        { "thesis_alternative": "MRT", "asc": 1.37, "raw_trips": 154, "share": 0.004 },
+        { "thesis_alternative": "Office Vehicle (school/staff buses)", "asc": 1.20, "raw_trips": 2496, "share": 0.065 }
+      ],
+      "rationale": "KNOWN RESIDUAL BIAS, deliberately left as-is for now: pt keeps Bus's ASC (1.28) rather than the share-weighted 1.023, overstating pt by ~0.26 utils (~2.3 min of travel time at beta_duration). The bucket is 79% bus so this is far milder than the car/motorcycle problem was (which was ~0.96 utils / 8.6 min). The cleaner fix is splitting Lagoona/Tempu out as its own road-based teleported mode - it is a human-hauler that is not in the GTFS at all and is currently being routed on bus transit lines it does not actually run on."
+    }
+  },
+  "fallback_speed_kmh": {
+    "note": "Used only by the Python synthesis-time seed assignment (dhaka/synthesis/population/mode_choice.py), which has no real routed travel time yet - the in-simulation Java estimator (DhakaTripEstimator) uses actual routed time instead and never reads this. Not thesis-sourced (the thesis used real Google Routes API skims); carried over from the project's earlier fallback-speed convention for consistency.",
+    "bike": 10.0,
+    "car": 22.0,
+    "motorcycle": 25.0,
+    "pt": 18.0,
+    "rickshaw": 10.0,
+    "paratransit": 15.0,
+    "walk": 4.0
+  },
+  "fare_assumptions": {
+    "car": {
+      "fuel_price_bdt_per_liter": 122,
+      "km_per_liter": 12,
+      "source": "Thesis states fuel price (122 BDT/liter, contextual Dhaka fuel price) but not the assumed fuel-consumption rate. km_per_liter=12 is NOT thesis-sourced - a documented placeholder for typical Dhaka traffic conditions, pending a better figure."
+    },
+    "motorcycle": {
+      "fuel_price_bdt_per_liter": 122,
+      "km_per_liter": 35,
+      "source": "Same thesis-stated fuel price as car; km_per_liter=35 is NOT thesis-sourced - a documented placeholder for a typical Dhaka commuter motorcycle. This ~3x better fuel economy than car is a large part of why motorcycle had to be split out of the car bucket: previously ~64% of 'car' trips were motorcycles being charged car fuel cost."
+    },
+    "pt": {
+      "bdt_per_km": 2.5,
+      "minimum_fare_bdt": 10,
+      "source": "BRTA-regulated Dhaka city bus rate (~2.4-2.5 Tk/km, ~10 Tk minimum fare, periodically revised). Thesis says fare uses 'government fare basis' but states no number - this is the actual current regulation, not thesis-sourced."
+    },
+    "paratransit": {
+      "flag_fall_bdt": 40,
+      "flag_fall_km": 2,
+      "bdt_per_km_after": 12,
+      "source": "Official BRTA CNG auto-rickshaw meter rate (fixed 2015, still officially in force): 40 BDT for the first 2 km, 12 BDT/km after. The thesis includes CNG as a mode but specifies NO fare construction for it anywhere in the text (confirmed via full-text search) - this rate is sourced from BRTA regulation, not the thesis. Note real-world drivers frequently ignore the meter in practice."
+    },
+    "rickshaw": {
+      "bdt_per_km": 10,
+      "source": "UNVERIFIED PLACEHOLDER. The thesis explicitly states rickshaw fare was 'assigned based on local travel experience and prevailing fare practices' with no formula given. 10 Tk/km is a rough, commonly-cited ballpark for negotiated Dhaka rickshaw fares - replace with a real figure if one becomes available."
+    },
+    "bike": { "bdt_per_km": 0, "source": "Thesis: bicycle is zero-fare." },
+    "walk": { "bdt_per_km": 0, "source": "Thesis: walking is zero-fare." }
+  }
+}

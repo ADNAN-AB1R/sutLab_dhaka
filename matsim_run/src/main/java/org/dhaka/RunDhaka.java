@@ -11,6 +11,8 @@ import org.matsim.core.router.AnalysisMainModeIdentifier;
 import org.matsim.core.router.RoutingModeMainModeIdentifier;
 import org.matsim.core.scenario.ScenarioUtils;
 
+import org.dhaka.mode_choice.DhakaModeChoiceModule;
+
 /**
  * Runs the Dhaka MATSim scenario assembled by dhaka/matsim/assemble_scenario.py
  * (output/dhaka_1pct_config.xml and the population/network/transit_schedule/
@@ -22,9 +24,11 @@ import org.matsim.core.scenario.ScenarioUtils;
  * the discrete_mode_choice contrib (config.xml's DiscreteModeChoice module +
  * a DiscreteModeChoice strategysettings entry in replanning) - the mode
  * dhaka.synthesis.population.mode_choice assigns at synthesis time is only
- * the initial seed plan; FittedMnlTripEstimator re-estimates every trip's
- * mode utility each time that strategy is picked, using that iteration's
- * actual simulated travel time and the same fitted MNL model. (Unrelated:
+ * the initial seed plan; org.dhaka.mode_choice.DhakaTripEstimator
+ * re-estimates every trip's mode utility each time that strategy is picked,
+ * using that iteration's actual simulated travel time and the same mode
+ * choice model estimated in Hoque's MSc thesis (see
+ * org.dhaka.mode_choice.parameters.DhakaModeParameters). (Unrelated:
  * config_dhaka.yml's mode_choice: False flag is a different, pre-existing
  * key that only gates an unused eqasim-java branch - see dhaka/output.py.)
  *
@@ -43,9 +47,9 @@ import org.matsim.core.scenario.ScenarioUtils;
  * exactly what dhaka/mode_choice's trip-level analysis relies on.
  *
  * Second, DiscreteModeChoiceModule (framework wiring) and
- * DhakaModeChoiceExtension (binds FittedMnlTripEstimator - see that class
- * and DhakaModeChoiceExtension for details) together activate the
- * DiscreteModeChoice module/strategy declared in config.xml.
+ * org.dhaka.mode_choice.DhakaModeChoiceModule (binds DhakaTripEstimator and
+ * its per-mode utility estimators - see that class for details) together
+ * activate the DiscreteModeChoice module/strategy declared in config.xml.
  *
  * Usage:
  *   java -jar target/dhaka-matsim-run-1.0.jar path/to/dhaka_1pct_config.xml
@@ -81,10 +85,11 @@ public class RunDhaka {
         // replanning strategysettings entry (see assemble_scenario.py) need
         // both of these installed to actually take effect - the base module
         // wires up the framework/replanning-strategy binding itself, and
-        // DhakaModeChoiceExtension binds our FittedMnlTripEstimator under
-        // the name ("Fitted") config.xml's tripEstimator param references.
+        // DhakaModeChoiceModule (org.dhaka.mode_choice) binds our
+        // DhakaTripEstimator under the name ("Fitted") config.xml's
+        // tripEstimator param references.
         controler.addOverridingModule(new DiscreteModeChoiceModule());
-        controler.addOverridingModule(new DhakaModeChoiceExtension());
+        controler.addOverridingModule(new DhakaModeChoiceModule());
 
         controler.run();
     }

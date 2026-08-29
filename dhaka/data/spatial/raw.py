@@ -59,3 +59,6 @@ def validate(context):
         raise RuntimeError(f"Dhaka ward shapefile is not available at location {SHP_FILE}")
 
     return os.path.getsize(SHP_FILE)
+
+
+

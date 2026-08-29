@@ -189,62 +189,185 @@ it'll be overwritten the next time the pipeline runs that stage.
 
 ## In-simulation mode choice (discrete_mode_choice)
 
-`dhaka/synthesis/population/mode_choice.py` assigns each trip's mode
-**once**, at population-synthesis time, using a distance/fallback-speed
-travel-time proxy. That's only the *initial seed* plan. `config.xml`'s
+`config.xml`'s
 `DiscreteModeChoice` module (see `dhaka/matsim/assemble_scenario.py`'s
 `CONFIG_TEMPLATE`) plus a `DiscreteModeChoice` entry in the `replanning`
 module make MATSim's `org.matsim.contrib:discrete_mode_choice` (DMC) contrib
 re-estimate every trip's mode each time that replanning strategy is picked
 for an agent — using that iteration's *actual* simulated/routed travel time,
-not the synthesis-time proxy. The underlying utility model is the same
-fitted MNL both places (`dhaka/mode_choice/fitted_coefficients.json`,
-`U = beta_time*time + asc[mode] + sum(coefficients[cov][mode]*value)`),
-implemented twice: in Python (`mode_choice.py`'s `apply_model()`, used
-statically) and in Java (`matsim_run/src/main/java/org/dhaka/
-FittedMnlTripEstimator.java`, used every iteration).
+not any synthesis-time proxy.
 
-Relevant classes:
-- `FittedCoefficients.java` — parses `fitted_coefficients.json` (path is
-  CWD-relative: `../dhaka/mode_choice/fitted_coefficients.json`, since this
-  project's convention is to run from `output/` — see the path-resolution
-  note above).
-- `FittedMnlTripEstimator.java` — the actual per-trip utility estimator,
-  reading person covariates from the same `population.xml` attributes
-  `dhaka/matsim/scenario/population.py` already writes (`householdIncome`,
-  `age`, `sex`, and license via `PersonUtils.getLicense()`, which reads the
-  `hasLicense` attribute key — confirmed by decompiling matsim-core, not
-  assumed).
-- `DhakaModeChoiceExtension.java` — binds `FittedMnlTripEstimator` under the
-  name `"Fitted"` (matches `CONFIG_TEMPLATE`'s `tripEstimator` param).
-- `RunDhaka.java` — installs `DiscreteModeChoiceModule` +
-  `DhakaModeChoiceExtension`, and (important, easy to miss) pre-registers
-  `DiscreteModeChoiceConfigGroup` when loading `config.xml`.
+**What seeds MATSim (easy to get wrong):** `population.xml` carries each
+trip's **HTS-donor mode**, *not* the modelled mode from
+`dhaka/synthesis/population/mode_choice.py`. That stage's output reaches
+`output/dhaka_1pct_trips.csv` (via `dhaka/output.py`) but **not** the MATSim
+scenario: `matsim/scenario/population.py` stages `synthesis.population.trips`,
+which `config_dhaka.yml` aliases to `dhaka.synthesis.population.trips` (the
+raw donor trips), not to the mode_choice stage. You can see this directly -
+`modestats.csv` iteration 0 matches the `mode_hts_donor` distribution exactly.
 
-**Tour-based** (`modelType=Tour`): a tour is the chain of trips between two
-visits to a `home` activity (`tourFinder`/`homeFinder` both
-`"ActivityBased"`, `activityTypes="home"` — matches the `scoring` module's
-`activityParams`). `FittedMnlTripEstimator` itself didn't need to change —
-it stays a pure per-trip estimator; `tourEstimator="Cumulative"` is a
-built-in DMC component (confirmed by decompiling the jar) that sums a
-`TripEstimator`'s per-trip utilities across a tour to score whole-tour
-candidates, delegating to whatever `tripEstimator` is configured (still
-`"Fitted"`). `tourConstraints="VehicleContinuity"`
-(`restrictedModes="car"`) requires the same car a tour leaves `home` with
-to be the one that returns — this closes the one real gap the earlier
-trip-based version had (an agent could drive to work and bus home,
-stranding the car). Deliberately *not* the stricter built-in `SubtourMode`
-constraint, which forces one mode for an entire tour — that would suppress
-the per-trip mode variation (e.g. rickshaw to a nearby shop mid-tour, bus
-the rest of the way home) the fitted model is designed to produce; car is
-the only mode where physical vehicle continuity actually matters here.
+This is left as-is deliberately, not treated as a bug to fix: the
+HTS-observed distribution is a *better* starting point for the co-evolutionary
+loop than an uncalibrated model's output would be (see the calibration note
+below - uncalibrated, this model puts walk at ~1% against an observed ~33%).
+Seeding MATSim with the modelled mode instead would only make sense once the
+ASCs are calibrated. Just don't assume `trips.csv`'s `mode` column and
+`population.xml` agree - they don't, by design.
 
-### Three Guice wiring issues, already fixed (don't reintroduce)
+**The utility model itself is the one estimated in Hoque's MSc thesis**
+(`paper/Ismamul Hoque Msc Thesis.pdf`, Table 4.1 mode-choice component),
+replacing the project's earlier HTS-fitted per-covariate model:
 
-Getting DMC to actually run (not just build) took three real fixes, each
-confirmed by decompiling the actual `discrete_mode_choice-2025.0.jar` and
-`matsim-2025.0.jar` — not guessed from docs, which are accurate on *usage*
-but not on these specific gotchas:
+```
+U[mode] = asc[mode] + beta_duration*travelTimeMinutes + beta_fare*fareBdt
+```
+
+with `bike` (bicycle) as the reference mode, and `beta_duration`/`beta_fare`
+**pooled across all modes** — only the ASC varies by mode. This is the
+thesis's actual full specification, not a simplified stand-in for a richer
+model: its mode-choice component has no socio-demographic terms at all
+(confirmed by reading its methodology, not assumed). Units were verified,
+not guessed, via the thesis's own stated value of travel time savings
+(≈200 BDT/hour): `(0.112/0.034) × 60 ≈ 197.6` only matches if duration is in
+**minutes** and fare is in **raw BDT** (not thousands) — see
+`dhaka/mode_choice/dhaka_mode_parameters.json`'s `"source"` field for the
+full derivation.
+
+Implemented in both Python (`mode_choice.py`'s `apply_model()`, the static
+seed) and Java (below, used every iteration), both reading the same
+`dhaka/mode_choice/dhaka_mode_parameters.json`.
+
+### Mode mapping: 12 thesis alternatives → 7 simulated modes
+
+The thesis estimates **12** alternatives; this scenario simulates **7**
+modes. That mismatch is the single most important thing to understand about
+this model, because getting it wrong silently biases everything downstream.
+Four modes map 1:1 and are exact; three are **composites**, and a composite's
+ASC is the **share-weighted average** of its constituent thesis ASCs, weighted
+by real raw DTCA HTS trip counts — *not* simply one constituent's ASC:
+
+| Simulated mode | Thesis alternative(s) | ASC used |
+|---|---|---|
+| `bike` | Bicycle (reference) | 0.00 — exact |
+| `rickshaw` | Rickshaw | 2.27 — exact |
+| `paratransit` | CNG auto-rickshaw | 3.31 — exact |
+| `walk` | Walk | 0.87 — exact |
+| `motorcycle` | Private Motorcycle (94%) + Ride-share Bike (6%) | **1.758** — weighted |
+| `car` | Private Car (83%) + Office Vehicle (11%) + Ride-share Car (5%) | **2.955** — weighted |
+| `pt` | Bus (79%) + Lagoona (14%) + school/staff bus (6%) + MRT (0.4%) | 1.28 — *see caveat* |
+
+The exact trip counts behind every weight are recorded in
+`dhaka_mode_parameters.json`'s `"composition"` block, so the arithmetic is
+auditable rather than asserted.
+
+**Why `motorcycle` is its own mode** (it wasn't originally, and that was a
+real bug): the raw survey has **16,323 motorcycle trips vs only 6,045 private
+car trips**. Folding them together produced a "car" mode that was **64%
+motorcycles** but carried private car's ASC (3.09 instead of the weighted
+2.13) *and* private car's fuel cost (122 BDT/l ÷ 12 km/l instead of ÷ 35
+km/l — ~3× too expensive). The ASC error made car too attractive while the
+cost error made it too expensive, so they partly cancelled in the baseline
+and the mistake was not visible in aggregate mode shares — but they would
+not have cancelled under any policy scenario (fuel price, congestion
+charging, mode-specific interventions). Splitting motorcycle out fixes the
+ASC, the cost model, and the speed (motorcycles teleport at ~25 km/h rather
+than queueing in car traffic, since Dhaka motorcycles filter through it).
+
+**`pt` keeps a known residual bias**: it uses Bus's ASC (1.28) rather than
+the share-weighted 1.023, overstating pt by ~0.26 utils ≈ 2.3 min of travel
+time. That is far milder than the car/motorcycle problem was (0.96 utils ≈
+8.6 min) because the bucket is 79% bus. The proper fix is splitting
+Lagoona/Tempu out as its own road-based teleported mode — it is a human
+hauler that is not in the GTFS at all and is currently being routed on bus
+transit lines it does not actually run on.
+
+### Package layout (mirrors eqasim-java's per-city pattern)
+
+`matsim_run/src/main/java/org/dhaka/mode_choice/` is deliberately laid out
+like `org.eqasim.<city>.mode_choice` in eqasim-java (e.g.
+[`sao_paulo/.../mode_choice`](https://github.com/eqasim-org/eqasim-java/tree/main/sao_paulo/src/main/java/org/eqasim/sao_paulo/mode_choice)) —
+**vendored into our own package, not a real `org.eqasim:core` dependency**
+(see "Why not real eqasim-java" below):
+
+```
+mode_choice/
+  DhakaModeChoiceModule.java     - binds everything (mirrors SaoPauloModeChoiceModule)
+  DhakaTripEstimator.java        - the actual DMC TripEstimator; dispatches to the right per-mode class
+  parameters/
+    DhakaModeParameters.java     - estimated behavioral coefficients (asc, beta_duration, beta_fare)
+    DhakaCostParameters.java     - scenario cost-calculation inputs (fuel price, bus rate, ...)
+  costs/
+    DhakaCarCostModel.java, DhakaMotorcycleCostModel.java,
+    DhakaPtCostModel.java, DhakaRickshawCostModel.java,
+    DhakaParatransitCostModel.java
+  utilities/estimators/
+    DhakaUtilityEstimator.java   - interface: estimateUtility(travelTimeMinutes, distanceMeters)
+    DhakaCarUtilityEstimator.java, DhakaMotorcycleUtilityEstimator.java,
+    DhakaPtUtilityEstimator.java, DhakaRickshawUtilityEstimator.java,
+    DhakaParatransitUtilityEstimator.java,
+    DhakaBikeUtilityEstimator.java, DhakaWalkUtilityEstimator.java
+```
+
+`DhakaModeParameters`/`DhakaCostParameters` split (mirrors
+`SaoPauloModeParameters`/`SaoPauloCostParameters`): the *estimated*
+coefficients (asc, beta_duration, beta_fare) are kept separate from the
+*scenario's* cost-calculation inputs (fuel price, bus fare rate, ...) — see
+each cost model class for its formula's source (several are documented
+assumptions filling real gaps the thesis leaves open, e.g. rickshaw's rate
+has no formula anywhere in the 115-page thesis; CNG's uses an official BRTA
+meter rate instead, since the thesis doesn't specify one either).
+
+No custom `DhakaModeAvailability`/constraint classes exist (unlike
+sao_paulo's `VehicleTourConstraintWithCarPassenger`/`WalkDurationConstraint`)
+— DMC's **built-in** `"Car"` mode-availability and `"VehicleContinuity"`
+tour-constraint components (configured directly in `config.xml`) are
+sufficient for this 6-mode milestone; sao_paulo needs custom ones for
+car-passenger interaction and a walk-duration cap this scenario doesn't
+currently model.
+
+**Why not real eqasim-java**: no eqasim-java release targets our pinned
+MATSim 2025.0 — checked directly: `develop` needs MATSim `2026.0-2026w02` +
+JDK 25 (the exact snapshot/JDK combo this project deliberately avoided, see
+the version note above); the closest release, `v2.0.0`, targets
+`2026.0-2025w19` (still a weekly snapshot); the previous release, `v1.5.0`,
+targets the old pre-calendar-year MATSim `15.0`. There's a real gap between
+those two releases that 2025.0 falls into. Taking the real dependency would
+mean migrating this whole project's MATSim/JDK pin — vendoring the pattern
+instead keeps everything validated against 2025.0 intact.
+
+### Tour-based (`modelType=Tour`), confirmed by the literature, not just chosen
+
+A tour is the chain of trips between two visits to a `home` activity
+(`tourFinder`/`homeFinder` both `"ActivityBased"`, `activityTypes="home"` —
+matches the `scoring` module's `activityParams`). `tourEstimator="Cumulative"`
+is a built-in DMC component (confirmed by decompiling the jar) that sums
+`DhakaTripEstimator`'s per-trip utilities across a tour to score whole-tour
+candidates — the "total utility approach" described in Hörl, Balac &
+Axhausen's *"Pairing discrete mode choice models and agent-based transport
+simulation with MATSim"* (`paper/trb_modechoice_matsim.submission.pdf`, the
+foundational paper behind the `discrete_mode_choice` contrib itself). That
+paper's own conclusion, from a real Zurich case study comparing both:
+**"the authors find that a tour-based model formulation is to be preferred
+over a trip-based one because by construction more consistent travel
+decisions are made... the tour-based model bears the potential of not
+having to perform a lot of calibration work"** — trip-based left cars
+stranded mid-city by end of day even with a vehicle-continuity constraint,
+because trip-by-trip decisions don't know about the rest of the day yet.
+
+`tourConstraints="VehicleContinuity"` (`restrictedModes="car"`) requires the
+same car a tour leaves `home` with to be the one that returns. Deliberately
+*not* the stricter built-in `SubtourMode` constraint, which forces one mode
+for an entire tour — that would suppress the per-trip mode variation (e.g.
+rickshaw to a nearby shop mid-tour, bus the rest of the way home) the
+model is meant to produce; car is the only mode where physical vehicle
+continuity actually matters here.
+
+### Guice wiring issues, already fixed (don't reintroduce)
+
+Getting DMC to actually run (not just build) took real fixes, each
+confirmed empirically (by decompiling the actual jars, or by hitting the
+error directly) — not guessed from docs, which are accurate on *usage* but
+not on these specific gotchas:
 
 1. **`DiscreteModeChoiceConfigGroup` must be pre-registered** when calling
    `ConfigUtils.loadConfig(...)` (see `RunDhaka.java`). Without it,
@@ -254,55 +377,107 @@ but not on these specific gotchas:
    Scenario is not explicitly bound` error — for *unrelated* modules
    (`SwissRailRaptorModule`, `CountsModule`, ...), which makes the real
    cause non-obvious from the error alone.
-2. **Use `com.google.inject.Inject`, not `javax.inject.Inject`**, on
-   `FittedMnlTripEstimator`'s constructor. With `javax.inject.Inject`, Guice
-   reported `No injectable constructor for type FittedMnlTripEstimator`
-   despite the annotation being present.
-3. **Bind `FittedCoefficients` explicitly** in
-   `DhakaModeChoiceExtension.installExtension()` (`bind(FittedCoefficients.class);`).
-   This Controler setup runs with JIT bindings disabled, so even a plain
-   concrete class with a no-arg constructor needs an explicit `bind()` call.
+2. **Use `com.google.inject.Inject`, not `javax.inject.Inject`**, on any
+   estimator/cost-model constructor. With `javax.inject.Inject`, Guice
+   reported `No injectable constructor` despite the annotation being
+   present.
+3. **Bind every concrete class explicitly** in
+   `DhakaModeChoiceModule.installExtension()` (`bind(DhakaModeParameters.class)`,
+   `bind(DhakaCostParameters.class)`, each cost model, ...). This Controler
+   setup runs with JIT bindings disabled, so even a plain concrete class
+   with a no-arg constructor needs an explicit `bind()` call.
+4. **The per-mode dispatch (`Map<String, DhakaUtilityEstimator>` in
+   `DhakaTripEstimator`) needs a graceful fallback for unmapped modes.**
+   DMC evaluates a trip's *existing* assigned mode as part of its candidate
+   set, not just the modes actually offered as new alternatives — and a
+   small number of population trips keep mode `"other"` from a synthesis-
+   time fallback (see `mode_choice.py`'s `apply_model()` for when that
+   happens). Throwing on an unmapped mode crashes the whole replanning
+   thread (`IllegalArgumentException: No Dhaka utility estimator bound for
+   mode: other`); `DhakaTripEstimator` instead degrades to a time-only
+   utility (no ASC/fare) for anything outside the 6-mode milestone — rare
+   enough that the exact fallback value has negligible effect, and such
+   modes can never be freshly *chosen* as new candidates anyway (they're
+   never in `config.xml`'s `availableModes` list).
 
 ### Calibration: `dhaka/mode_choice/calibrate_asc.py`
 
-The fitted model was estimated against HTS trips using a distance/fixed-
-speed travel-time proxy; DMC drives it with real simulated travel times
-instead, so simulated mode shares won't match HTS-observed shares out of
-the box — that gap is what ASC calibration closes (standard sample-
-enumeration procedure, Train 2009): for each mode,
-`asc_new = asc_old + ln(target_share / simulated_share)`, rebased so the
-reference mode (`walk`)'s implicit ASC stays at 0.
+The thesis's ASCs were estimated against a separate, independent survey
+(927 observations, single "most frequently used mode" per respondent);
+DMC drives the model with real simulated travel times and our own larger
+HTS-derived population instead, so simulated mode shares won't match our
+HTS-observed shares out of the box — that gap is what ASC calibration
+closes (standard sample-enumeration procedure, Train 2009, also standard
+practice for locally re-anchoring a transferred/externally-estimated
+model): for each mode, `asc_new = asc_old + ln(target_share /
+simulated_share)`, rebased so the reference mode (`bike`)'s implicit ASC
+stays at 0. The thesis's estimated behavioral *sensitivities*
+(`beta_duration`, `beta_fare`) are left untouched — only the ASCs (which
+absorb unmeasured local/contextual factors) are recalibrated.
 
 ```bash
 python -m dhaka.mode_choice.calibrate_asc output/simulation_output/modestats.csv
 ```
 
-This overwrites `fitted_coefficients.json` in place with updated ASCs —
-`FittedMnlTripEstimator` picks it up fresh on the next run, no rebuild
-needed. Because MATSim's response to new ASCs is itself non-linear (route
-choice/congestion feedback), this is **iterative**: re-run matsim_run for
-enough iterations to reconverge, regenerate `modestats.csv`, run the
-calibration script again, repeat until each mode's simulated share is
-within tolerance (e.g. ±2 percentage points) of target.
+This overwrites `dhaka_mode_parameters.json`'s ASCs in place — picked up
+fresh by both the Python seed assignment and `DhakaModeParameters` on the
+next run, no rebuild needed. Because MATSim's response to new ASCs is
+itself non-linear (route choice/congestion feedback), this is
+**iterative**: re-run matsim_run for enough iterations to reconverge,
+regenerate `modestats.csv`, run the calibration script again, repeat until
+each mode's simulated share is within tolerance (e.g. ±2 percentage
+points) of target.
 
-**Re-run calibration after any `DiscreteModeChoice` config change** (e.g.
-the trip→tour-based switch) — different candidate generation/constraints
-shift simulated mode-share dynamics, so ASCs calibrated under one setup
-aren't guaranteed to still be well-calibrated under another.
+**Re-run calibration after any mode-choice model or config change** —
+different coefficients, candidate generation, or constraints all shift
+simulated mode-share dynamics, so ASCs calibrated under one setup aren't
+guaranteed to still be well-calibrated under another. The calibration
+rounds run earlier in this project (documented in prior commits) were
+against the old HTS-fitted model and no longer apply to this one — treat
+calibration as starting fresh with the thesis-based model.
 
-As of the last calibration round run in this project (trip-based,
-pre-dating the tour-based switch above — treat as a starting point, not a
-current result): `bike`, `rickshaw`,
-`paratransit`, `pt`, and `walk` are within a few points of their HTS
-targets; `car` is still converging (needed the largest ASC swing of any
-mode — real routed car travel time appears to penalize car much more than
-the synthesis-time distance/speed proxy did) and will likely need a couple
-more calibration rounds. Continuing that loop is the natural next step
-before treating simulated mode shares as final.
+**Calibration is NOT optional for this model.** Applied cold, the thesis's
+published ASCs do not reproduce Dhaka's observed all-trip mode split at all:
+they put walk at ~1% against an observed ~33%, and car+motorcycle at ~63%
+against an observed ~17%. That is not a bug - the thesis estimated its
+constants on *commute trips to a Primary Activity Location* (mean 7.6 km in
+its sample), where motorised modes genuinely dominate, whereas this pipeline
+simulates **all** trip purposes with a median trip length of only 1.6 km,
+where walking and rickshaw dominate in reality. The time and cost
+*sensitivities* transfer fine; the constants have to be re-anchored locally.
+Expect calibrated ASCs to end up a long way from the published values - the
+resulting model is then honestly described as "the thesis's functional form
+and time/cost sensitivities, with locally calibrated constants", not "the
+thesis's model as published".
 
 ## Known limitations
 
-- **Car calibration not yet converged** — see the note directly above.
+- **Calibration not yet run for the thesis-based model** — the ASC
+  calibration rounds from earlier in this project were against the old
+  HTS-fitted model and no longer apply; treat calibration as starting
+  fresh (see "Calibration" above).
+- **Several fare inputs are documented assumptions, not thesis-sourced**:
+  rickshaw's Tk/km rate (the thesis gives no formula at all - "local travel
+  experience/prevailing practice"), CNG's rate (sourced from official BRTA
+  regulation instead, since the thesis includes CNG as a mode but specifies
+  no fare construction for it anywhere in its 115 pages), and the km/liter
+  fuel-efficiency figures for both car (12) and motorcycle (35) - the thesis
+  states the fuel *price* (122 BDT/l) only. See
+  `dhaka_mode_parameters.json`'s `"fare_assumptions"` for the full list of
+  what's thesis-derived vs. a placeholder.
+- **`pt` carries a known ~0.26-util ASC bias** (uses Bus's 1.28 rather than
+  the share-weighted 1.023, because the bucket is 14% Lagoona) - see the
+  mode-mapping table above. Fix is to split Lagoona out as its own mode.
+- **MRT cannot be modelled at all right now**: the transit schedule has no
+  metro line - all 154 of its lines are `transportMode=bus` - so there is
+  nothing to route MRT on, regardless of the thesis having an MRT ASC.
+  Any MRT-expansion scenario analysis is blocked until the supply includes
+  a real metro line.
+- **The mode-choice model itself comes from a small, independent survey**
+  (927 observations, one "most frequently used mode" per respondent) —
+  different in kind from this project's own much larger DTCA HTS (274,946
+  trips). Legitimate and well-fit (rho-sq 0.86), but worth remembering this
+  isn't the same data source as the rest of the pipeline.
 - **Non-car, non-pt modes are teleported**, not network-routed (walk, bike,
   rickshaw, paratransit) — see the `routing` module in `CONFIG_TEMPLATE`.
   Real congestion/interaction effects for these modes aren't captured.
@@ -317,13 +492,16 @@ before treating simulated mode shares as final.
   (not naive leg-level) analysis tool that distinguishes genuine walk trips
   from failed-pt-routing-forced-to-walk.
 - **Transit vehicle `passengerCarEquivalents` and network `flowCapacityFactor`/
-  `storageCapacityFactor` are both scaled by `sampling_rate`** (see
-  `CONFIG_TEMPLATE`'s `qsim` module and `scale_transit_pce()` in
-  `assemble_scenario.py`) — without this, a handful of full-frequency,
-  full-size transit vehicles run against an artificially shrunk road
-  network and cause spurious gridlock. If you change `sampling_rate` in
-  `config_dhaka.yml`, both scale automatically; don't hand-tune one without
-  the other.
+  `storageCapacityFactor` are all scaled by `sqrt(sampling_rate)`, not the
+  raw `sampling_rate`** (see `CONFIG_TEMPLATE`'s `qsim` module and
+  `scale_transit_pce()`/`capacity_factor` in `assemble_scenario.py`) —
+  confirmed empirically that scaling by the raw sample fraction causes
+  severe artificial gridlock at 1% (median link capacity of ~600 veh/h
+  becomes ~6 veh/h, a hard per-link bottleneck almost nothing can pass
+  through regardless of real demand); `sqrt(sampling_rate)` is the standard
+  mitigation. If you change `sampling_rate` in `config_dhaka.yml`, all
+  three recompute automatically on regeneration; don't hand-tune one
+  without the others.
 
 ## Common mistakes
 
