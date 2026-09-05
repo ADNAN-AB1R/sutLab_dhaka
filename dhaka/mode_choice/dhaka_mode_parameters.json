@@ -1,15 +1,23 @@
 {
-  "modes": ["bike", "car", "motorcycle", "pt", "rickshaw", "paratransit", "walk"],
+  "modes": [
+    "bike",
+    "car",
+    "motorcycle",
+    "pt",
+    "rickshaw",
+    "paratransit",
+    "walk"
+  ],
   "reference_mode": "bike",
   "beta_duration_per_minute": -0.112,
   "beta_fare_per_bdt": -0.034,
   "asc": {
-    "car": 2.955,
-    "motorcycle": 1.758,
-    "pt": 1.28,
-    "rickshaw": 2.27,
-    "paratransit": 3.31,
-    "walk": 0.87
+    "car": 1.8754,
+    "motorcycle": 0.8446,
+    "pt": 0.8651,
+    "rickshaw": 5.116,
+    "paratransit": 4.0017,
+    "walk": 6.6782
   },
   "source": "Hoque, Ismamul - MSc Thesis (paper/Ismamul Hoque Msc Thesis.pdf), Table 4.1 mode choice component (12-alternative MNL, bicycle reference, 927 observations, GAUSS MAXLIK). Thesis ASCs: Bicycle(ref)=0.00, Bus=1.28***, MRT=1.37***, CNG=3.31***, Office Vehicle=1.20**, Ride-share Bike=-0.03(ns), Ride-share Car=4.60***, Rickshaw=2.27***, Lagoona=-0.502(ns), Private Motorcycle=1.87***, Private Car=3.09***, Walk=0.87*. beta_duration/beta_fare are pooled across all 12 alternatives in the thesis, not mode-specific. Units confirmed (not assumed) via the thesis's own stated VTTS: (0.112/0.034)*60 = 197.6 BDT/hr matches the thesis's reported ~200 BDT/hr only if duration is in MINUTES and fare is in raw BDT (not thousands).",
   "mode_mapping": {
@@ -27,40 +35,87 @@
     "motorcycle": {
       "weighted_asc": 1.758,
       "parts": [
-        { "thesis_alternative": "Private Motorcycle", "asc": 1.87, "raw_trips": 15357, "share": 0.941 },
-        { "thesis_alternative": "Ride-share Bike", "asc": -0.03, "raw_trips": 966, "share": 0.059 }
+        {
+          "thesis_alternative": "Private Motorcycle",
+          "asc": 1.87,
+          "raw_trips": 15357,
+          "share": 0.941
+        },
+        {
+          "thesis_alternative": "Ride-share Bike",
+          "asc": -0.03,
+          "raw_trips": 966,
+          "share": 0.059
+        }
       ],
       "rationale": "All motorcycle variants are grouped because on the network they are physically the same vehicle (speed, fuel cost, filtering behaviour). The thesis's much lower ride-share bike ASC is carried through the share weighting rather than by simulating it separately."
     },
     "car": {
       "weighted_asc": 2.955,
       "parts": [
-        { "thesis_alternative": "Private Car", "asc": 3.09, "raw_trips": 6045, "share": 0.832 },
-        { "thesis_alternative": "Ride-share Car", "asc": 4.60, "raw_trips": 391, "share": 0.054 },
-        { "thesis_alternative": "Office Vehicle", "asc": 1.20, "raw_trips": 830, "share": 0.114 }
+        {
+          "thesis_alternative": "Private Car",
+          "asc": 3.09,
+          "raw_trips": 6045,
+          "share": 0.832
+        },
+        {
+          "thesis_alternative": "Ride-share Car",
+          "asc": 4.6,
+          "raw_trips": 391,
+          "share": 0.054
+        },
+        {
+          "thesis_alternative": "Office Vehicle",
+          "asc": 1.2,
+          "raw_trips": 830,
+          "share": 0.114
+        }
       ]
     },
     "pt": {
       "weighted_asc_if_recomputed": 1.023,
       "asc_currently_used": 1.28,
       "parts": [
-        { "thesis_alternative": "Bus", "asc": 1.28, "raw_trips": 30484, "share": 0.790 },
-        { "thesis_alternative": "Lagoona", "asc": -0.502, "raw_trips": 5461, "share": 0.141 },
-        { "thesis_alternative": "MRT", "asc": 1.37, "raw_trips": 154, "share": 0.004 },
-        { "thesis_alternative": "Office Vehicle (school/staff buses)", "asc": 1.20, "raw_trips": 2496, "share": 0.065 }
+        {
+          "thesis_alternative": "Bus",
+          "asc": 1.28,
+          "raw_trips": 30484,
+          "share": 0.79
+        },
+        {
+          "thesis_alternative": "Lagoona",
+          "asc": -0.502,
+          "raw_trips": 5461,
+          "share": 0.141
+        },
+        {
+          "thesis_alternative": "MRT",
+          "asc": 1.37,
+          "raw_trips": 154,
+          "share": 0.004
+        },
+        {
+          "thesis_alternative": "Office Vehicle (school/staff buses)",
+          "asc": 1.2,
+          "raw_trips": 2496,
+          "share": 0.065
+        }
       ],
       "rationale": "KNOWN RESIDUAL BIAS, deliberately left as-is for now: pt keeps Bus's ASC (1.28) rather than the share-weighted 1.023, overstating pt by ~0.26 utils (~2.3 min of travel time at beta_duration). The bucket is 79% bus so this is far milder than the car/motorcycle problem was (which was ~0.96 utils / 8.6 min). The cleaner fix is splitting Lagoona/Tempu out as its own road-based teleported mode - it is a human-hauler that is not in the GTFS at all and is currently being routed on bus transit lines it does not actually run on."
     }
   },
   "fallback_speed_kmh": {
-    "note": "Used only by the Python synthesis-time seed assignment (dhaka/synthesis/population/mode_choice.py), which has no real routed travel time yet - the in-simulation Java estimator (DhakaTripEstimator) uses actual routed time instead and never reads this. Not thesis-sourced (the thesis used real Google Routes API skims); carried over from the project's earlier fallback-speed convention for consistency.",
-    "bike": 10.0,
+    "note": "Travel-time proxy for the Python synthesis-time seed assignment (dhaka/synthesis/population/mode_choice.py) and for the offline pre-calibration (dhaka/mode_choice/precalibrate_asc.py) - the in-simulation Java estimator (DhakaTripEstimator) uses actual routed time and never reads this. For every TELEPORTED mode these are now derived from, and must stay consistent with, dhaka/matsim/assemble_scenario.py's routing block: MATSim multiplies the beeline distance by beelineDistanceFactor (1.3) before dividing by teleportedModeSpeed, so the effective speed an agent achieves over a straight-line O-D distance is teleportedModeSpeed/1.3, NOT teleportedModeSpeed. Values here are that effective speed (m/s / 1.3 * 3.6). They previously used the raw teleport speed, making every teleported mode ~17-31% too fast in the proxy and biasing any ASC calibrated against it. car (network-routed, congested) and pt (SwissRailRaptor, includes wait/transfer) have no closed-form equivalent - they stay documented proxies and are the main reason offline pre-calibration must still be followed by MATSim calibration rounds.",
+    "bike": 8.58,
     "car": 22.0,
-    "motorcycle": 25.0,
+    "motorcycle": 19.11,
     "pt": 18.0,
-    "rickshaw": 10.0,
-    "paratransit": 15.0,
-    "walk": 4.0
+    "rickshaw": 7.75,
+    "paratransit": 11.63,
+    "walk": 3.05,
+    "car_note": "proxy only - car is network-routed; actual speed is congestion-dependent",
+    "pt_note": "proxy only - pt is raptor-routed; actual time includes access/wait/transfer"
   },
   "fare_assumptions": {
     "car": {
@@ -88,7 +143,14 @@
       "bdt_per_km": 10,
       "source": "UNVERIFIED PLACEHOLDER. The thesis explicitly states rickshaw fare was 'assigned based on local travel experience and prevailing fare practices' with no formula given. 10 Tk/km is a rough, commonly-cited ballpark for negotiated Dhaka rickshaw fares - replace with a real figure if one becomes available."
     },
-    "bike": { "bdt_per_km": 0, "source": "Thesis: bicycle is zero-fare." },
-    "walk": { "bdt_per_km": 0, "source": "Thesis: walking is zero-fare." }
-  }
+    "bike": {
+      "bdt_per_km": 0,
+      "source": "Thesis: bicycle is zero-fare."
+    },
+    "walk": {
+      "bdt_per_km": 0,
+      "source": "Thesis: walking is zero-fare."
+    }
+  },
+  "asc_provenance": "Pre-calibrated offline by dhaka/mode_choice/precalibrate_asc.py against the mode_hts_donor target shares, starting from the thesis's published ASCs (which are kept verbatim in this file's 'source' and 'composition' fields). The values in 'asc' are therefore NO LONGER the thesis values - see 'source' for those. They are still to be refined by MATSim calibration rounds via dhaka/mode_choice/calibrate_asc.py, which corrects the part of the gap only the simulation can reveal: congested car time, routed pt time, tour-level choice, and congestion feedback."
 }

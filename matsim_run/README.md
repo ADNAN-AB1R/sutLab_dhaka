@@ -400,7 +400,58 @@ not on these specific gotchas:
    modes can never be freshly *chosen* as new candidates anyway (they're
    never in `config.xml`'s `availableModes` list).
 
-### Calibration: `dhaka/mode_choice/calibrate_asc.py`
+### Calibration, stage 1 (offline): `dhaka/mode_choice/precalibrate_asc.py`
+
+Run this **once, before the first MATSim calibration round**. It closes the
+large structural part of the ASC gap analytically instead of spending a
+1.5–2 h MATSim run per step on it.
+
+```bash
+python -m dhaka.mode_choice.precalibrate_asc [--dry-run]
+```
+
+It applies the same utility function to the same synthetic trips using the
+`fallback_speed_kmh` travel-time proxy, and iterates the *same* update rule
+as stage 2 (`asc_new = asc_old + ln(target/modelled)`, rebased on `bike`) to
+a fixed point — ~20 rounds, a few seconds. Targets are the same
+`mode_hts_donor` shares stage 2 uses, so the two stages cannot drift apart.
+
+Measured effect (246,680 trips): every mode lands exactly on target offline,
+and the resulting model reproduces a sensible distance profile — walk 75%
+below 500 m falling to 0% beyond 10 km, rickshaw peaking at 48% around
+2–3 km, pt/motorcycle taking the long tail. Cold thesis ASCs produce none of
+that.
+
+| mode | target | before | after | old ASC | new ASC |
+|---|---|---|---|---|---|
+| bike (ref) | 0.60% | 1.51% | 0.60% | 0.000 | 0.000 |
+| car | 7.24% | 38.85% | 7.24% | 2.955 | 1.875 |
+| motorcycle | 9.82% | 23.85% | 9.82% | 1.758 | 0.845 |
+| pt | 11.13% | 14.56% | 11.13% | 1.280 | 0.865 |
+| rickshaw | 29.72% | 7.85% | 29.72% | 2.270 | 5.116 |
+| paratransit | 8.61% | 12.58% | 8.61% | 3.310 | 4.002 |
+| walk | 32.88% | 0.81% | 32.88% | 0.870 | 6.678 |
+
+**It does not replace stage 2.** Offline it cannot see congested car time,
+routed pt time (access/wait/transfer), tour-level choice under
+`VehicleContinuity`, or congestion↔mode-split feedback. For every
+*teleported* mode the proxy speed is exact by construction; `car` and `pt`
+are the two modes whose ASCs will still be materially wrong afterwards.
+
+Distances come from `output/dhaka_1pct_trips.gpkg`'s **geometry** (the real
+synthetic O–D distance). The trips CSV's `euclidean_distance` column is the
+HTS *donor's* distance — it correlates with the synthetic distance at
+r = 0.02 and must not be used for this.
+
+`fallback_speed_kmh` must stay consistent with `assemble_scenario.py`'s
+routing block: MATSim multiplies beeline distance by `beelineDistanceFactor`
+(1.3) *before* dividing by `teleportedModeSpeed`, so the effective speed over
+a straight-line O–D distance is `teleportedModeSpeed / 1.3`. These values
+previously used the raw teleport speed, making every teleported mode 17–31%
+too fast in the proxy (e.g. motorcycle 25 km/h assumed vs 19.1 km/h actual).
+That is fixed — but change one and you must change the other.
+
+### Calibration, stage 2 (in-simulation): `dhaka/mode_choice/calibrate_asc.py`
 
 The thesis's ASCs were estimated against a separate, independent survey
 (927 observations, single "most frequently used mode" per respondent);
@@ -452,10 +503,25 @@ thesis's model as published".
 
 ## Known limitations
 
-- **Calibration not yet run for the thesis-based model** — the ASC
-  calibration rounds from earlier in this project were against the old
-  HTS-fitted model and no longer apply; treat calibration as starting
-  fresh (see "Calibration" above).
+- **In-simulation calibration not yet run for the thesis-based model** —
+  offline pre-calibration (stage 1) has been applied, so the ASCs in
+  `dhaka_mode_parameters.json` are no longer the thesis's published values
+  and already reproduce the target aggregate shares under the proxy. The
+  MATSim rounds (stage 2) that correct congested car time, routed pt time
+  and tour-level effects have **not** been run. The ASC calibration rounds
+  from earlier in this project were against the old HTS-fitted model and do
+  not apply.
+- **Synthetic trip distance is not mode-consistent with the donor mode.**
+  The location-assignment stage reproduces the overall distance
+  *distribution* well (synthetic vs donor: mean 3878 m vs 3811 m, median
+  1920 m vs 1617 m, p90 10.3 km vs 10.7 km) but per-trip the two correlate
+  at only r = 0.02, so a trip whose donor walked 300 m can be assigned a
+  9 km destination — 9.4% of `mode_hts_donor == walk` trips are given
+  destinations over 10 km. Aggregate calibration targets are unaffected
+  (they are share counts, not distances), and DMC re-chooses the mode for
+  the distance it is actually given, so this does not corrupt the mode
+  model. It does mean `mode_hts_donor` cannot be used as a
+  distance-conditional validation target.
 - **Several fare inputs are documented assumptions, not thesis-sourced**:
   rickshaw's Tk/km rate (the thesis gives no formula at all - "local travel
   experience/prevailing practice"), CNG's rate (sourced from official BRTA
