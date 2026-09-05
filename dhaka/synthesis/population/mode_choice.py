@@ -1,5 +1,6 @@
 import os
 import json
+import hashlib
 
 import numpy as np
 import pandas as pd
@@ -57,10 +58,32 @@ PARAMETERS_PATH = os.path.join(
 )
 
 
+def model_file_digest():
+    """Content digest of dhaka_mode_parameters.json, registered as a config
+    value in configure() so that editing the model invalidates this stage's
+    synpp cache.
+
+    Without this the cache is WRONG, not merely stale: synpp's get_stage_hash
+    hashes only the stage module's own source code, and the cache key is that
+    plus the stage's required config values. A data file read at execute time
+    is invisible to both, so re-running the pipeline after (say) an ASC
+    calibration silently reuses the cached seed plan computed from the OLD
+    coefficients - with no warning, and with output files whose timestamps
+    update as though they had been regenerated.
+
+    Digesting the whole file (not just the coefficients) means a comment-only
+    edit also invalidates. That is the safe direction to err in: it costs one
+    re-run of a cheap stage, whereas under-invalidating silently corrupts the
+    seed plan."""
+    with open(PARAMETERS_PATH, "rb") as f:
+        return hashlib.md5(f.read()).hexdigest()
+
+
 def configure(context):
     context.stage("dhaka.synthesis.population.trips")
     context.stage("synthesis.population.spatial.locations")
     context.config("random_seed")
+    context.config("dhaka.mode_parameters_digest", model_file_digest())
 
 
 def load_model():

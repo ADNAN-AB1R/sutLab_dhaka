@@ -45,6 +45,14 @@ config:
   sampling_rate: 0.01
   random_seed: 1234
 
+  # MATSim iterations written into the generated config.xml. Was previously
+  # unset, so it fell back to assemble_scenario.py's default of 0 - a single
+  # iteration, enough for a smoke test but NOT enough to converge mode choice
+  # or congestion, and therefore useless as an ASC calibration target. 15 is
+  # the working figure for a calibration round (~6-7 min/iteration at 1%,
+  # so roughly 1.5-2 h); drop it back to 0 for a smoke test.
+  matsim_last_iteration: 15
+
   # Paths to the input data and where the output should be stored (relative
   # to the repo root, since that's where we invoke `python -m synpp ...` from)
   data_path: raw_data/Dhaka

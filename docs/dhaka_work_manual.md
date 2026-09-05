@@ -60,6 +60,14 @@ Run this after **any** change to `dhaka/matsim/assemble_scenario.py`,
 regenerates `output/dhaka_1pct_config.xml` and the demand/supply files.
 `synpp` caches unchanged stages, so this is incremental, not a full re-run.
 
+A change to `dhaka_mode_parameters.json` invalidates the seed stage **only
+because** `dhaka/synthesis/population/mode_choice.py`'s `configure()`
+registers a content digest of that file as a config value. synpp itself
+hashes just the stage module's source, so without that digest the pipeline
+silently reuses a seed plan built from the old coefficients while still
+rewriting the output files (so timestamps update and nothing looks wrong).
+Don't remove it.
+
 Key `config_dhaka.yml` settings: `sampling_rate`, `random_seed`,
 `matsim_last_iteration`, `output_path`/`output_prefix`.
 
