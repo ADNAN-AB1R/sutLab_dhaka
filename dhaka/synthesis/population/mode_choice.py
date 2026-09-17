@@ -120,10 +120,13 @@ def compute_fare_bdt(mode, distance_m, fare_assumptions):
     mode's formula and source."""
     distance_km = distance_m / 1000.0
 
-    if mode in ("car", "motorcycle"):
-        params = fare_assumptions[mode]
-        bdt_per_km = params["fuel_price_bdt_per_liter"] / params["km_per_liter"]
-        return bdt_per_km * distance_km
+    if mode in ("car", "motorcycle", "rickshaw"):
+        # Effective BDT/km calibrated against the survey's reported trip costs
+        # (dhaka/mode_choice/calibrate_fares.py). car/motorcycle previously used
+        # fuel_price / km_per_liter, which structurally cannot represent a
+        # ride-hail fare or a hired driver's wage and understated observed cost
+        # 5.1x / 3.6x respectively.
+        return fare_assumptions[mode]["bdt_per_km"] * distance_km
 
     if mode == "pt":
         params = fare_assumptions["pt"]
@@ -137,9 +140,6 @@ def compute_fare_bdt(mode, distance_m, fare_assumptions):
             params["flag_fall_bdt"],
             params["flag_fall_bdt"] + params["bdt_per_km_after"] * (distance_km - flag_fall_km)
         )
-
-    if mode == "rickshaw":
-        return fare_assumptions["rickshaw"]["bdt_per_km"] * distance_km
 
     return np.zeros_like(distance_km)  # bike, walk
 

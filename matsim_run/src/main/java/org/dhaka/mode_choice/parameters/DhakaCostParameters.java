@@ -26,11 +26,14 @@ import com.google.inject.Singleton;
 public class DhakaCostParameters {
     private static final String PATH = "../dhaka/mode_choice/dhaka_mode_parameters.json";
 
-    private final double carFuelPriceBdtPerLiter;
-    private final double carKmPerLiter;
-
-    private final double motorcycleFuelPriceBdtPerLiter;
-    private final double motorcycleKmPerLiter;
+    // Effective BDT/km, calibrated against the DTCA survey's reported trip
+    // costs by dhaka/mode_choice/calibrate_fares.py. Replaces the previous
+    // fuel_price/km_per_liter construction, which could only ever express
+    // private fuel burn and so understated observed cost 5.1x (car) and 3.6x
+    // (motorcycle) - those buckets are substantially ride-hailing, and Dhaka
+    // private cars commonly carry a hired driver's wage and parking too.
+    private final double carBdtPerKm;
+    private final double motorcycleBdtPerKm;
 
     private final double ptBdtPerKm;
     private final double ptMinimumFareBdt;
@@ -49,12 +52,10 @@ public class DhakaCostParameters {
             Map<String, Object> fareAssumptions = (Map<String, Object>) raw.get("fare_assumptions");
 
             Map<String, Object> car = (Map<String, Object>) fareAssumptions.get("car");
-            this.carFuelPriceBdtPerLiter = ((Number) car.get("fuel_price_bdt_per_liter")).doubleValue();
-            this.carKmPerLiter = ((Number) car.get("km_per_liter")).doubleValue();
+            this.carBdtPerKm = ((Number) car.get("bdt_per_km")).doubleValue();
 
             Map<String, Object> motorcycle = (Map<String, Object>) fareAssumptions.get("motorcycle");
-            this.motorcycleFuelPriceBdtPerLiter = ((Number) motorcycle.get("fuel_price_bdt_per_liter")).doubleValue();
-            this.motorcycleKmPerLiter = ((Number) motorcycle.get("km_per_liter")).doubleValue();
+            this.motorcycleBdtPerKm = ((Number) motorcycle.get("bdt_per_km")).doubleValue();
 
             Map<String, Object> pt = (Map<String, Object>) fareAssumptions.get("pt");
             this.ptBdtPerKm = ((Number) pt.get("bdt_per_km")).doubleValue();
@@ -72,20 +73,12 @@ public class DhakaCostParameters {
         }
     }
 
-    public double getCarFuelPriceBdtPerLiter() {
-        return carFuelPriceBdtPerLiter;
+    public double getCarBdtPerKm() {
+        return carBdtPerKm;
     }
 
-    public double getCarKmPerLiter() {
-        return carKmPerLiter;
-    }
-
-    public double getMotorcycleFuelPriceBdtPerLiter() {
-        return motorcycleFuelPriceBdtPerLiter;
-    }
-
-    public double getMotorcycleKmPerLiter() {
-        return motorcycleKmPerLiter;
+    public double getMotorcycleBdtPerKm() {
+        return motorcycleBdtPerKm;
     }
 
     public double getPtBdtPerKm() {

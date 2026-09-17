@@ -23,8 +23,7 @@ public class DhakaMotorcycleCostModel {
     }
 
     public double calculateCost_bdt(double distanceMeters) {
-        double bdtPerKm = parameters.getMotorcycleFuelPriceBdtPerLiter()
-            / parameters.getMotorcycleKmPerLiter();
+        double bdtPerKm = parameters.getMotorcycleBdtPerKm();
         return bdtPerKm * (distanceMeters / 1000.0);
     }
 }

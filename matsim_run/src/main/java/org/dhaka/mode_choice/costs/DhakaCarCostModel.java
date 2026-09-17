@@ -19,7 +19,7 @@ public class DhakaCarCostModel {
     }
 
     public double calculateCost_bdt(double distanceMeters) {
-        double bdtPerKm = parameters.getCarFuelPriceBdtPerLiter() / parameters.getCarKmPerLiter();
+        double bdtPerKm = parameters.getCarBdtPerKm();
         return bdtPerKm * (distanceMeters / 1000.0);
     }
 }
