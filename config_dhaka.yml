@@ -51,7 +51,7 @@ config:
   # or congestion, and therefore useless as an ASC calibration target. 15 is
   # the working figure for a calibration round (~6-7 min/iteration at 1%,
   # so roughly 1.5-2 h); drop it back to 0 for a smoke test.
-  matsim_last_iteration: 15
+  matsim_last_iteration: 5
 
   # Paths to the input data and where the output should be stored (relative
   # to the repo root, since that's where we invoke `python -m synpp ...` from)
