@@ -15,3 +15,8 @@ slurm-*.out
 # Maven build output for matsim_run/ (includes an ~85MB shaded jar - rebuild
 # via `mvn clean package` in matsim_run/, don't commit it)
 target/
+
+# DTCA sheet cache + estimation dataset (regenerable from raw_data via
+# dhaka/mode_choice/build_estimation_dataset.py; ~6 min Excel parse)
+dhaka/mode_choice/cache_dtca_sheets/
+dhaka/mode_choice/estimation_dataset.parquet
