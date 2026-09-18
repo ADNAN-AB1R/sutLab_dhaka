@@ -15,6 +15,47 @@ def configure(context):
 
 
 
+def commute_modes(df_trips, df_persons, purpose):
+    """Mode of each person's (first) trip TO the given purpose - the mode the
+    commute distance should be drawn for. NaN if the person has no such trip
+    (e.g. only a trip leaving work); those fall back to the pooled
+    distribution."""
+    df_commute = df_trips[df_trips["following_purpose"] == purpose][["person_id", "mode"]]
+    df_commute = df_commute.drop_duplicates("person_id")
+    return df_persons[["person_id"]].merge(df_commute, on = "person_id", how = "left")["mode"].astype(object).values
+
+
+def sample_radius(distribution, modes):
+    """Target distance and matching tolerance per person, drawn from the
+    distribution for that person's commute mode (or the purpose's pooled one
+    when the mode has none). Modes are processed in sorted order so the
+    random draws are reproducible - iterating a set of strings is not."""
+    radius = np.zeros(len(modes))
+    tolerance = np.zeros(len(modes))
+    mode_keys = np.array([m if isinstance(m, str) else "" for m in modes])
+    for mode in sorted(set(mode_keys)):
+        selected = distribution["by_mode"].get(mode, distribution)
+        f = mode_keys == mode
+        draws = np.random.rand(f.sum())
+        radius[f] = selected["midpoint_bins"][np.searchsorted(selected["cdf"], draws)]
+        tolerance[f] = selected["threshold_buffer"]
+    return radius, tolerance
+
+
+def select_near_radius(ind, dist, target, tolerance, query_size):
+    """Candidates whose distance from home is CLOSEST to the sampled target.
+    Everything within tolerance of it, or failing that the query_size
+    candidates nearest to it. Replaces the previous rule, which searched out to
+    1.2x the target and then took the FARTHEST candidates found - a systematic
+    outward push that made synthetic work commutes ~27% longer than the
+    survey's."""
+    difference = np.abs(dist - target)
+    selected = ind[difference <= tolerance]
+    if len(selected) < query_size:
+        selected = ind[np.argsort(difference)[:query_size]]
+    return selected
+
+
 def prepare_work_persons(context):
     df_persons = context.stage("synthesis.population.enriched")
     df_trips = context.stage("synthesis.population.trips")
@@ -22,7 +63,8 @@ def prepare_work_persons(context):
     # Find persons with work trips
     df_trips_work = df_trips[(df_trips["following_purpose"] == "work") | (df_trips["preceding_purpose"] == "work")].copy()
     df_work_persons = df_persons[df_persons["person_id"].isin(df_trips_work["person_id"].unique())].copy()
-    
+    df_work_persons["commute_mode"] = commute_modes(df_trips, df_work_persons, "work")
+
     return df_work_persons
 
 
@@ -39,13 +81,8 @@ def prepare_work_destinations(context):
 def prepare_radius_from_cdf(context, df_work_persons):
     distributions = context.stage("synthesis.population.spatial.primary.distance_distributions")
     
-    cdf = distributions["work"]["cdf"]
-    midpoint_bins = distributions["work"]["midpoint_bins"]
-    random_values = np.random.rand(len(df_work_persons))
-    value_bins = np.searchsorted(cdf, random_values)
-    radius = midpoint_bins[value_bins]
-
-    return radius, distributions
+    radius, tolerance = sample_radius(distributions["work"], df_work_persons["commute_mode"].values)
+    return radius, tolerance
 
 
 def impute_work_locations_radius(context):
@@ -68,11 +105,8 @@ def impute_work_locations_radius(context):
     df_work_candidates = prepare_work_destinations(context)
     
     # Prepare the distances used for sampling based on the CDF (this is the radius variable)
-    radius, distributions = prepare_radius_from_cdf(context, df_work_persons)
-    
-    # Create a threshold for donut shape selection
-    threshold = distributions["work"]["threshold_buffer"]
-    radius = radius + np.array(threshold)
+    radius, tolerance = prepare_radius_from_cdf(context, df_work_persons)
+
 
     
     query_size = 3
@@ -83,7 +117,8 @@ def impute_work_locations_radius(context):
     tree = KDTree(work_coordinates)
     
     # Sample distances and find candidates within radius
-    search_radius = radius * 1.2  # try 1.2
+    # Search just far enough to hold candidates around the target distance.
+    search_radius = radius + tolerance
     indices, distances = tree.query_radius(home_coordinates, r=search_radius, return_distance=True, sort_results=True)
     
     chosen_indices = []
@@ -102,24 +137,8 @@ def impute_work_locations_radius(context):
             dist = new_dist[0]
             # print(i, ind, dist)
         
-        # If enough facilities, apply donut selection
-        elif len(ind) >= query_size:
-            farthest_dist = dist[-1]
-            min_threshold_band = farthest_dist - threshold
-            minimum_selection_bound = max(min_threshold_band, dist[0])
-            maximum_selection_bound = farthest_dist
-            donut_ind = ind[(dist >= minimum_selection_bound) & (dist <= maximum_selection_bound)]
-            
-            # grow the donut until we have enough candidates
-            growth_factor = 1.5
-            while len(donut_ind) < query_size and minimum_selection_bound > dist[0]:
-                donut_width = maximum_selection_bound - minimum_selection_bound
-                minimum_selection_bound = max(minimum_selection_bound - donut_width * growth_factor, dist[0])
-                maximum_selection_bound = min(maximum_selection_bound + donut_width * growth_factor, dist[-1])
-                donut_ind = ind[(dist >= minimum_selection_bound) & (dist <= maximum_selection_bound)]
-            
-            ind = donut_ind
-        
+        # Keep the candidates closest to the sampled target distance.
+        ind = select_near_radius(ind, dist, radius[i], tolerance[i], query_size)
 
         # Select facility using number of employees as weight
         weights = df_work_candidates.iloc[ind]["employees"].values

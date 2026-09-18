@@ -88,11 +88,24 @@ def execute(context):
     distance_distributions = context.stage("synthesis.population.spatial.secondary.distance_distributions")
     destinations = prepare_destinations(context)
 
-    # Purpose-specific distance correction factors
+    # Purpose-specific distance correction factors. Each sampled target
+    # distance is MULTIPLIED by these (components.CustomDistanceSampler), so
+    # anything above 1.0 makes synthetic trips longer than the survey trips
+    # they are drawn from.
+    #
+    # Deliberately all 1.0 for Dhaka. The previous 1.5 for shop/leisure/other
+    # was inherited unchanged from the Seville template in the first commit
+    # (seville/.../locations.py has the same 1.5; the generic template uses
+    # 1.5 / 2.0 / 2.5) - tuning for another city's survey, never chosen for
+    # Dhaka, and it inflated every discretionary trip by 50%. Such factors
+    # exist to compensate if the location solver systematically produces
+    # distances SHORTER than the survey; whether Dhaka needs any is an
+    # empirical question to settle by comparing synthetic vs survey distance
+    # distributions by purpose, not by importing another city's value.
     purpose_corrections = {
-        'shop': 1.5,        
-        'leisure': 1.5,     
-        'other': 1.5,       
+        'shop': 1.0,
+        'leisure': 1.0,
+        'other': 1.0,
     }
 
     # Resampling for mode calibration

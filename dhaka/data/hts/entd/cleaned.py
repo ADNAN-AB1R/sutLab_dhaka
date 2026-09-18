@@ -101,13 +101,20 @@ INCOME_BRACKETS = [
 # Assumed operating speed per mode (km/h), used ONLY as a fallback to estimate
 # trip distance from trip_duration for trips where we have no coordinates at
 # all for the destination (see note in calculate_trip_distance below).
+# Converts a trip's REPORTED door-to-door travel time into a STRAIGHT-LINE
+# distance: distance = reported time x speed. So these must be door-to-door,
+# straight-line-effective speeds (straight-line O-D distance / total trip time,
+# including walking to the vehicle, waiting and route detours) - NOT vehicle
+# speeds. Measured from the simulation's own trips on 2026-09-18
+# (simulation_output/ITERS/it.0/0.trips.csv.gz, euclidean_distance /
+# trav_time by main_mode). The previous values were raw vehicle speeds (walk
+# 4.0, car 22, motorcycle 25 km/h), which overstate straight-line distance per
+# minute by up to ~80%.
 FALLBACK_SPEED_KMH = {
-    "walk": 4.0, "bike": 10.0, "rickshaw": 10.0,
-    "paratransit": 15.0, "pt": 18.0, "car": 22.0,
-    # Slightly faster than car: Dhaka motorcycles filter through stationary
-    # traffic rather than queueing in it.
-    "motorcycle": 25.0,
-    "other": 15.0,
+    "walk": 3.05, "bike": 6.71, "rickshaw": 5.72,
+    "paratransit": 12.15, "pt": 7.61, "car": 13.87,
+    "motorcycle": 13.68,
+    "other": 11.63,
 }
 
 TIME_PATTERN = re.compile(r"(\d{1,2}):(\d{2}):?(\d{2})?\s*(am|pm)?", re.IGNORECASE)
@@ -262,8 +269,31 @@ def execute(context):
         for origin_ward, destination_ward in zip(df_trips["origin_ward_id"], df_trips["destination_ward_id"])
     ]
 
-    speed_kmh = df_trips["mode"].astype(str).map(FALLBACK_SPEED_KMH).fillna(15.0)
+    speed_kmh = df_trips["mode"].astype(str).map(FALLBACK_SPEED_KMH).fillna(11.63)
     fallback_distance = (df_trips["trip_duration"] / 3600.0) * speed_kmh * 1000.0
+
+    # Intra-zone trips in the COARSE zones (Savar, Keraniganj - each a whole
+    # upazila, since the shapefile has no subdivision for them) get their
+    # distance from reported travel time instead of two random points.
+    # Sampling two independent points across an entire upazila turns a local
+    # errand into a cross-upazila journey: measured on the DTCA survey,
+    # intra-zone trips there came out at a median 9.6 km (Savar) and 8.1 km
+    # (Keraniganj), 47% / 37% of them over 10 km, while the same trips were
+    # REPORTED as taking a median 8 minutes. They are 21.3% of all survey
+    # trips, and location assignment reproduces them faithfully, so a fifth of
+    # the synthetic population's everyday trips went ~9 km away. City wards are
+    # small enough that sampling works (intra-ward median 0.74 km, consistent
+    # with the ~0.7 km people report walking) and are left unchanged.
+    coarse_zones = set(dhaka.wards.UPAZILA_ZONES.values())
+    intra_coarse = (
+        (df_trips["origin_ward_id"] == df_trips["destination_ward_id"])
+        & df_trips["origin_ward_id"].isin(coarse_zones)
+        & (df_trips["trip_duration"] > 0)
+    )
+    df_trips.loc[intra_coarse, "euclidean_distance"] = fallback_distance[intra_coarse]
+    print("Coarse-zone intra-zone trips given time-based distance: %d (%.1f%%)" % (
+        intra_coarse.sum(), 100 * intra_coarse.mean()))
+
     df_trips["euclidean_distance"] = df_trips["euclidean_distance"].fillna(fallback_distance)
     df_trips["euclidean_distance"] = df_trips["euclidean_distance"].clip(lower = 50.0)  # avoid zero-length trips
 

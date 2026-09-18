@@ -45,6 +45,20 @@ def compute_cdf(context, df, bin_size=100, percentile=0.90):
     return cdf, histbin_midpoints, threshold_buffer
 
 
+# Minimum survey trips for a purpose x mode cell to get its own distribution;
+# smaller cells fall back to the purpose's pooled distribution.
+MINIMUM_TRIPS = 200
+
+
+def build_distribution(context, df, distance_field, number_of_bins):
+    df = df[[distance_field, "weight"]].rename(columns = { distance_field: "distance" })
+    cdf, midpoint_bins, threshold_buffer = compute_cdf(
+        context, df, bin_size = number_of_bins, percentile = 1.0)
+    if cdf is None:
+        return None
+    return dict(cdf = cdf, midpoint_bins = midpoint_bins, threshold_buffer = threshold_buffer)
+
+
 def execute(context):
     distance_field = "euclidean_distance"
 
@@ -59,57 +73,38 @@ def execute(context):
 
     df_trips = df_trips[df_trips[distance_field] > 0.0]
 
-    # Calculate distributions
-    # calibrate
-    bin_size_work = 200
-    bin_size_edu = 100
+    # Distributions per purpose, each POOLED over modes (the fallback) plus
+    # one per commute MODE. Work and education locations were previously drawn
+    # from the pooled distribution only, so a walking commuter and a bus
+    # commuter drew from the same distances - measured on the synthetic
+    # population, walk commutes came out ~70% too long and pt/car commutes
+    # ~30-45% too short against the survey (distances compressed towards the
+    # middle). The location stages now draw from their person's commute-mode
+    # distribution when that mode has at least MINIMUM_TRIPS survey trips.
     distributions = {}
+    for purpose, number_of_bins in (("work", 200), ("education", 100)):
+        df_purpose = df_trips[df_trips["following_purpose"] == purpose]
+        if len(df_purpose) == 0:
+            print("WARNING: No %s trips found in HTS data" % purpose)
+            distributions[purpose] = None
+            continue
 
-    # Extract work distances
-    # Using the person weights and the distance of all trips that end at work
-    df_trips_work = df_trips[df_trips["following_purpose"] == "work"].copy()
+        pooled = build_distribution(context, df_purpose, distance_field, number_of_bins)
+        if pooled is None:
+            print("WARNING: Could not generate %s distance distribution" % purpose)
+            distributions[purpose] = None
+            continue
 
-    if len(df_trips_work) > 0:
-        df_work = df_trips_work[[distance_field, "weight"]].rename(
-            columns={distance_field: "distance"})
-        work_cdf, work_midpoint_bin_distances, work_threshold_buffer = compute_cdf(
-            context, df_work, bin_size=bin_size_work, percentile=1.0) # 0.80
+        pooled["by_mode"] = {}
+        for mode, df_mode in df_purpose.groupby("mode"):
+            if len(df_mode) < MINIMUM_TRIPS:
+                continue
+            by_mode = build_distribution(context, df_mode, distance_field, number_of_bins)
+            if by_mode is not None:
+                pooled["by_mode"][str(mode)] = by_mode
 
-        # Write distribution for work
-        if work_cdf is not None:
-            distributions["work"] = dict(
-                cdf=work_cdf, 
-                midpoint_bins=work_midpoint_bin_distances, 
-                threshold_buffer=work_threshold_buffer
-            )
-        else:
-            print("WARNING: Could not generate work distance distribution")
-            distributions["work"] = None
-    else:
-        print("WARNING: No work trips found in HTS data")
-        distributions["work"] = None
-
-    # Extract education distances
-    df_trips_edu = df_trips[df_trips["following_purpose"] == "education"].copy()
-
-    if len(df_trips_edu) > 0:
-        df_edu = df_trips_edu[[distance_field, "weight"]].rename(
-            columns={distance_field: "distance"})
-        edu_cdf, edu_midpoint_bin_distances, edu_threshold_buffer = compute_cdf(
-            context, df_edu, bin_size=bin_size_edu, percentile=1.0) # 0.90
-
-        # Write distribution for education
-        if edu_cdf is not None:
-            distributions["education"] = dict(
-                cdf=edu_cdf, 
-                midpoint_bins=edu_midpoint_bin_distances, 
-                threshold_buffer=edu_threshold_buffer
-            )
-        else:
-            print("WARNING: Could not generate education distance distribution")
-            distributions["education"] = None
-    else:
-        print("WARNING: No education trips found in HTS data")
-        distributions["education"] = None
+        print("%s distance distributions: pooled + by mode for %s" % (
+            purpose, sorted(pooled["by_mode"])))
+        distributions[purpose] = pooled
 
     return distributions

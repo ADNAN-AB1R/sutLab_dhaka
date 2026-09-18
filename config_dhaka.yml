@@ -48,11 +48,13 @@ config:
   # MATSim iterations written into the generated config.xml. Was previously
   # unset, so it fell back to assemble_scenario.py's default of 0 - a single
   # iteration, enough for a smoke test but NOT enough to converge mode choice
-  # or congestion, and therefore useless as an ASC calibration target. 15 is
-  # the working figure for a calibration round (~4 min/iteration at 1% since
-  # road modes moved onto the network, so about an hour); drop it back to
-  # 0 for a smoke test.
-  matsim_last_iteration: 15
+  # or congestion, and therefore useless as an ASC calibration target.
+  # Measured cost at 1%: iteration 0 ~4 min, every replanning iteration
+  # ~11-14 min (tour-based mode choice dominates), so 15 iterations ~3 h.
+  # Use 3 to TEST a fix - drift shows up within 1-3 iterations - and 15 (or
+  # fewer with a warm start from the previous round's plans) for an actual
+  # calibration round.
+  matsim_last_iteration: 3
 
   # Paths to the input data and where the output should be stored (relative
   # to the repo root, since that's where we invoke `python -m synpp ...` from)
