@@ -45,6 +45,11 @@ public class DhakaModeParameters {
     // lookup rather than a Math.pow.
     private final double[] fareScaleByIncomeClass;
 
+    // mode -> {person attribute holding the household's vehicle count,
+    // constant added when that count is zero}. See "ownership_constants".
+    private final Map<String, String> ownershipAttribute;
+    private final Map<String, Double> nonOwnerConstant;
+
     @SuppressWarnings("unchecked")
     public DhakaModeParameters() {
         try {
@@ -69,6 +74,19 @@ public class DhakaModeParameters {
             for (int i = 0; i < midpoints.size(); i++) {
                 this.fareScaleByIncomeClass[i] =
                     Math.pow(midpoints.get(i).doubleValue() / referenceIncome, -elasticity);
+            }
+
+            this.ownershipAttribute = new HashMap<>();
+            this.nonOwnerConstant = new HashMap<>();
+            Map<String, Object> ownership = (Map<String, Object>) raw.get("ownership_constants");
+            for (Map.Entry<String, Object> entry : ownership.entrySet()) {
+                if (!(entry.getValue() instanceof Map)) {
+                    continue; // the "source" note
+                }
+                Map<String, Object> spec = (Map<String, Object>) entry.getValue();
+                this.ownershipAttribute.put(entry.getKey(), (String) spec.get("household_attribute"));
+                this.nonOwnerConstant.put(entry.getKey(),
+                    ((Number) spec.get("non_owner_constant")).doubleValue());
             }
         } catch (IOException e) {
             throw new RuntimeException("Could not load Dhaka mode parameters from " + PATH, e);
@@ -112,6 +130,35 @@ public class DhakaModeParameters {
             return betaFare;
         }
         return betaFare * fareScaleByIncomeClass[incomeClass];
+    }
+
+    /**
+     * Vehicle-ownership constant for this person and mode: the mode's
+     * non_owner_constant if the person's household owns none of that vehicle
+     * type, otherwise 0. See dhaka_mode_parameters.json "ownership_constants".
+     *
+     * A utility penalty rather than a hard availability gate, deliberately:
+     * in the DTCA survey non-owning households still make 14.1% of car,
+     * 7.1% of motorcycle and 18.4% of bike trips (staff/company cars,
+     * ride-hailing, chauffeured or family vehicles, borrowed bikes). This
+     * replaces DiscreteModeChoice's built-in "Car" availability, which gated
+     * car on a driving licence held by 4.9% of persons while 60.3% of car
+     * trips are made by people without one.
+     *
+     * A person with no ownership attribute at all gets 0 (treated as an
+     * owner), so an older population file degrades to the old behaviour
+     * rather than silently penalising everyone.
+     */
+    public double getOwnershipConstant(Person person, String mode) {
+        String attributeName = ownershipAttribute.get(mode);
+        if (attributeName == null) {
+            return 0.0;
+        }
+        Object attribute = person.getAttributes().getAttribute(attributeName);
+        if (!(attribute instanceof Number)) {
+            return 0.0;
+        }
+        return ((Number) attribute).intValue() == 0 ? nonOwnerConstant.get(mode) : 0.0;
     }
 
     public double getAsc(String mode) {

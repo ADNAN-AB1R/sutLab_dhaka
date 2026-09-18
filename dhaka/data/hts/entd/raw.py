@@ -39,6 +39,13 @@ HOUSEHOLD_COLUMNS = [
     "hhid", "upazila", "ward_union", "q7_hh_income", "q11_own_vehicle_no",
 ]
 
+# q15_vehicles values (per household member) counted as owning each vehicle
+# type. Exact strings as they appear in the survey.
+CAR_VEHICLE_TYPES = [
+    "Private Car (Sedan)", "Car", "Microbus", "4WD/Jeep/SUV", "Pick-up etc.",
+]
+MOTORCYCLE_VEHICLE_TYPES = ["Motorcycle, etc.", "Motorcycle"]
+
 TRIP_COLUMNS = [
     "hhid", "memberid", "trip_no", "upazila",
     "q44_trip_purpose",
@@ -131,6 +138,25 @@ def execute(context):
     df_bikes = is_bike.groupby(df_persons["household_id"]).sum().rename("number_of_bikes").reset_index()
     df_households = pd.merge(df_households, df_bikes, on = "household_id", how = "left")
     df_households["number_of_bikes"] = df_households["number_of_bikes"].fillna(0)
+
+    # Number of cars / motorcycles: household members reporting that vehicle
+    # type in q15_vehicles. Uses the per-person field rather than the household
+    # q11_own_vehicle_no, because q11 is only a COUNT - it cannot say whether a
+    # vehicle is a car or a motorcycle, which mode choice needs. Car types
+    # follow MODES_MAP in cleaned.py, where Truck/Pickup trips count as car.
+    # Survey result: 2.7% of households own a car and 9.2% a motorcycle, and
+    # those households make 85.9% of car trips and 92.9% of motorcycle trips.
+    # Previously the pipeline never set these at all, and
+    # dhaka/ipu/attributed.py defaulted every household to one car.
+    vehicle = df_persons["personal_vehicle"].astype(str)
+    counts = pd.DataFrame({
+        "household_id": df_persons["household_id"],
+        "number_of_cars": vehicle.isin(CAR_VEHICLE_TYPES),
+        "number_of_motorcycles": vehicle.isin(MOTORCYCLE_VEHICLE_TYPES),
+    }).groupby("household_id").sum().reset_index()
+    df_households = pd.merge(df_households, counts, on = "household_id", how = "left")
+    for column in ("number_of_cars", "number_of_motorcycles"):
+        df_households[column] = df_households[column].fillna(0).astype(int)
 
     # ------------------------------------------------------------------
     # Trips

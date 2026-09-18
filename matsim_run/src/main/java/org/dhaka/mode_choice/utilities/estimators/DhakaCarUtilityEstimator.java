@@ -21,6 +21,7 @@ public class DhakaCarUtilityEstimator implements DhakaUtilityEstimator {
     public double estimateUtility(Person person, double travelTimeMinutes, double distanceMeters) {
         double fareBdt = costModel.calculateCost_bdt(distanceMeters);
         return parameters.getAsc("car")
+            + parameters.getOwnershipConstant(person, "car")
             + parameters.getBetaDuration() * travelTimeMinutes
             + parameters.getBetaFare(person) * fareBdt;
     }

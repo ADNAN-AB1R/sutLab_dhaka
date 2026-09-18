@@ -12,12 +12,12 @@
   "beta_duration_per_minute": -0.112,
   "beta_fare_per_bdt": -0.034,
   "asc": {
-    "car": 5.6244,
-    "motorcycle": 3.43,
-    "pt": 1.5185,
-    "rickshaw": 6.9591,
-    "paratransit": 1.888,
-    "walk": 7.7271
+    "car": 4.2412,
+    "motorcycle": 1.6669,
+    "pt": -2.4898,
+    "rickshaw": 3.1417,
+    "paratransit": -2.1371,
+    "walk": 3.8758
   },
   "source": "Hoque, Ismamul - MSc Thesis (paper/Ismamul Hoque Msc Thesis.pdf), Table 4.1 mode choice component (12-alternative MNL, bicycle reference, 927 observations, GAUSS MAXLIK). Thesis ASCs: Bicycle(ref)=0.00, Bus=1.28***, MRT=1.37***, CNG=3.31***, Office Vehicle=1.20**, Ride-share Bike=-0.03(ns), Ride-share Car=4.60***, Rickshaw=2.27***, Lagoona=-0.502(ns), Private Motorcycle=1.87***, Private Car=3.09***, Walk=0.87*. beta_duration/beta_fare are pooled across all 12 alternatives in the thesis, not mode-specific. Units confirmed (not assumed) via the thesis's own stated VTTS: (0.112/0.034)*60 = 197.6 BDT/hr matches the thesis's reported ~200 BDT/hr only if duration is in MINUTES and fare is in raw BDT (not thousands).",
   "mode_mapping": {
@@ -166,5 +166,23 @@
     ],
     "formula": "beta_fare(person) = beta_fare_per_bdt * (income_bdt / reference_income_bdt) ** (-elasticity); persons with unknown income (class -1 or missing) get beta_fare_per_bdt unscaled",
     "source": "Hoque's model has a single pooled beta_fare, which implies one VTTS of 197.6 BDT/h for everyone. Against implied wages from the DTCA income brackets that is 4.22x the wage for the Tk 10-20k bracket but 0.49x for >Tk 100k, where conventional VTTS is 0.3-0.5x the wage - the signature of a model estimated on affluent residence-choice respondents and applied to a poorer all-trip population. Scaling cost sensitivity with income is standard practice (eqasim's utility functions do the same). With beta_duration fixed, VTTS scales as income**elasticity. elasticity=0.5 is the cross-sectional income elasticity of VTTS typically found in meta-analyses (Abrantes & Wardman 2011; Wardman, Chintakayala & de Jong 2016) - a LITERATURE value, not estimated here. reference_income is the DTCA trip-weighted median household income (bracket Tk 50-60k, cumulative 46.8% -> 58.0%), so beta_fare is exactly Hoque's value for the median household and the transfer is preserved at the centre of the distribution. class_midpoints are bracket midpoints; the open top bracket (>Tk 100k) is set to 130k, an ASSUMPTION. What this does NOT fix: the average VTTS level stays Hoque's; it redistributes it. With elasticity 0.5 the VTTS/wage spread narrows from 0.49x-4.22x to roughly 0.75x-2.20x, so low-income travellers are still valued above their wage."
+  },
+  "ownership_constants": {
+    "car": {
+      "household_attribute": "householdCars",
+      "non_owner_constant": -4.252,
+      "target_non_owner_trip_share": 0.145
+    },
+    "motorcycle": {
+      "household_attribute": "householdMotorcycles",
+      "non_owner_constant": -4.5296,
+      "target_non_owner_trip_share": 0.093
+    },
+    "bike": {
+      "household_attribute": "householdBikes",
+      "non_owner_constant": -5.6136,
+      "target_non_owner_trip_share": 0.21
+    },
+    "source": "Vehicle ownership, modelled as a UTILITY PENALTY for persons whose household owns none of that vehicle type (non_owner_constant is added to that mode's utility), not as a hard availability gate. Evidence from the DTCA survey (q15_vehicles per member), on the SAME basis the population is synthesised from - study-area households, expansion-weighted: 11.1% of households own a car, 20.6% a motorcycle, 2.1% a bicycle (the synthetic population reproduces this: 10.9 / 20.5 / 2.2%). Car-owning households are under-sampled and heavily up-weighted, so the unweighted all-survey figures (2.7 / 9.2 / 2.5%) are NOT comparable. Owning households make 85.5% of car, 90.7% of motorcycle and 79.0% of bike trips, so ownership dominates but is NOT absolute - non-owners still make 14.5% / 9.3% / 21.0% of those trips, through staff and company cars, ride-hailing (Uber/Pathao), chauffeured or family vehicles, and borrowed bikes. A hard gate would delete those trips; the penalty keeps them possible and is calibrated so the non-owner share of each mode's trips reproduces target_non_owner_trip_share (dhaka/mode_choice/precalibrate_asc.py fits it jointly with the ASCs). This REPLACES DiscreteModeChoice's built-in 'Car' mode availability, which gated car on a driving licence: only 4.9% of persons hold one, yet 60.3% of survey car trips are made by people without a licence (82% of those 'drive by driver' - chauffeured). That gate made most real car use impossible and is the likely main cause of car collapsing from 7.2% to ~2.7% in the September runs. It also read an attribute named 'carAvail', so the population's 'carAvailability' was never consulted at all."
   }
 }

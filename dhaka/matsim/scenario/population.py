@@ -21,7 +21,8 @@ PERSON_FIELDS = [
     "census_household_id", "census_person_id", "household_id",
     "has_license", "has_pt_subscription",
     "hts_id", "hts_household_id",
-    "age", "employed", "sex"
+    "age", "employed", "sex",
+    "number_of_cars", "number_of_motorcycles", "number_of_bikes",
 ]
 
 ACTIVITY_FIELDS = [
@@ -45,6 +46,18 @@ def add_person(writer, person, activities, trips, vehicles):
 
     writer.add_attribute("carAvailability", "java.lang.String", person[PERSON_FIELDS.index("car_availability")])
     writer.add_attribute("bicycleAvailability", "java.lang.String", person[PERSON_FIELDS.index("bicycle_availability")])
+
+    # Household vehicle counts, read by matsim_run's DhakaModeParameters to
+    # apply the ownership constants for car / motorcycle / bike (see
+    # dhaka_mode_parameters.json "ownership_constants"). Written as counts,
+    # not as DMC's "carAvail" string: DMC's built-in Car availability would
+    # read that as a HARD gate, but non-owning households make 14.1% of car
+    # and 7.1% of motorcycle trips in the survey (staff cars, company cars,
+    # ride-hailing, chauffeured family cars), so ownership is modelled as a
+    # utility penalty instead.
+    writer.add_attribute("householdCars", "java.lang.Integer", int(person[PERSON_FIELDS.index("number_of_cars")]))
+    writer.add_attribute("householdMotorcycles", "java.lang.Integer", int(person[PERSON_FIELDS.index("number_of_motorcycles")]))
+    writer.add_attribute("householdBikes", "java.lang.Integer", int(person[PERSON_FIELDS.index("number_of_bikes")]))
 
     writer.add_attribute("censusHouseholdId", "java.lang.Long", person[PERSON_FIELDS.index("census_household_id")])
     writer.add_attribute("censusPersonId", "java.lang.Long", person[PERSON_FIELDS.index("census_person_id")])

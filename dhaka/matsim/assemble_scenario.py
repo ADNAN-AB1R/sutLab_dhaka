@@ -513,13 +513,22 @@ CONFIG_TEMPLATE = """<?xml version="1.0" ?>
          model is designed to produce (e.g. rickshaw to a nearby
          shop mid-tour, bus the rest of the way home), and the only
          physical resource actually requiring continuity is the car
-         itself. modeAvailability "Car" gates the car alternative by the
-         population's existing hasLicense/carAvailability person
-         attributes (confirmed via the actual matsim-core jar:
-         PersonUtils.getLicense() reads the "hasLicense" attribute key,
-         which dhaka/matsim/scenario/population.py already writes) - every
-         other mode here has no such constraint in Dhaka (rickshaw/
-         paratransit need no license).
+         itself.
+
+         modeAvailability is "Default": every mode is offered to everyone.
+         It was previously DMC's built-in "Car", which (verified from the
+         bytecode) drops car when hasLicense == "no" or carAvail == "never".
+         That was wrong for Dhaka on both counts: only 4.9% of persons hold a
+         licence, yet 60.3% of DTCA car trips are made by people without one
+         (82% of those "drive by driver" - chauffeured); and it reads an
+         attribute called "carAvail", so the population's "carAvailability"
+         was never consulted at all. The licence gate made most real car use
+         impossible and is the likely main cause of car collapsing from 7.2%
+         to ~2.7% in the September runs. Vehicle ownership is now a utility
+         penalty inside the estimators instead (DhakaModeParameters.
+         getOwnershipConstant; dhaka_mode_parameters.json
+         "ownership_constants"), because non-owning households still make
+         14.1% of car and 7.1% of motorcycle trips.
 
          cachedModes matters a lot more here than it would for trip-based:
          tour-based candidate enumeration evaluates many trip x mode
@@ -553,12 +562,12 @@ CONFIG_TEMPLATE = """<?xml version="1.0" ?>
         <param name="tripEstimator" value="Fitted" />
         <param name="tourEstimator" value="Cumulative" />
         <param name="selector" value="MultinomialLogit" />
-        <param name="modeAvailability" value="Car" />
+        <param name="modeAvailability" value="Default" />
         <param name="tourConstraints" value="VehicleContinuity" />
         <param name="tourFilters" value="TourLength" />
         <param name="cachedModes" value="walk,bike,car,motorcycle,pt,rickshaw,paratransit" />
 
-        <parameterset type="modeAvailability:Car">
+        <parameterset type="modeAvailability:Default">
             <param name="availableModes" value="walk,bike,car,motorcycle,pt,rickshaw,paratransit" />
         </parameterset>
         <parameterset type="tourFilter:TourLength">

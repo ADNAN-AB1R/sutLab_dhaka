@@ -34,15 +34,24 @@ def execute(context):
     )
 
     # Prepare HTS seed data
-    # income_class (ordinal 0-8 from the DTCA household income bracket, -1 =
-    # unstated) is not a raking target - it rides through IPU raking and TRS
-    # integerisation as a passenger column, exactly like household_size, so
-    # each synthetic household inherits its seed household's income. Consumed
-    # by dhaka/income.py; needed by mode choice's income-scaled cost
-    # sensitivity (see dhaka/mode_choice/dhaka_mode_parameters.json
-    # "income_scaling"). Before this, every synthetic person had income 0.
+    # income_class and the vehicle counts are not raking targets - they ride
+    # through IPU raking and TRS integerisation as passenger columns, exactly
+    # like household_size, so each synthetic household inherits its seed
+    # household's income and vehicles.
+    #   income_class: consumed by dhaka/income.py for mode choice's
+    #     income-scaled cost sensitivity. Before this, every synthetic person
+    #     had income 0.
+    #   number_of_cars / _motorcycles / _bikes: consumed by
+    #     synthesis.population.enriched (car_availability) and written to each
+    #     MATSim person for mode choice's ownership constants. Before this,
+    #     dhaka/ipu/attributed.py defaulted every household to one car and one
+    #     bike, so 94% of persons had carAvailability=all against a surveyed
+    #     2.7% household car ownership.
     hts_df = df_persons_hts.merge(
-        df_households_hts[["household_id", "household_size", "household_weight", "income_class"]],
+        df_households_hts[[
+            "household_id", "household_size", "household_weight", "income_class",
+            "number_of_cars", "number_of_motorcycles", "number_of_bikes",
+        ]],
         on="household_id",
         how="left",
     )

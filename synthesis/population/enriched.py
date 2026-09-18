@@ -23,14 +23,29 @@ def configure(context):
 
 def execute(context):
     # Select population columns
-    df_population = context.stage("synthesis.population.sampled")[[
+    df_sampled = context.stage("synthesis.population.sampled")
+
+    # Vehicle counts beyond cars are taken from the synthetic household when
+    # the city's population synthesis provides them (Dhaka carries
+    # number_of_motorcycles and number_of_bikes through IPU from the survey).
+    # Optional so other cities' pipelines, which do not, are unaffected. When
+    # number_of_bikes is taken here, the HTS-donor merge below skips it, so a
+    # person's car, motorcycle and bike counts all describe the SAME household
+    # - otherwise bikes came from the trip-chain donor's survey household while
+    # cars came from the synthetic one.
+    optional_vehicle_columns = [
+        column for column in ("number_of_motorcycles", "number_of_bikes")
+        if column in df_sampled.columns
+    ]
+
+    df_population = df_sampled[[
         "person_id", "household_id",
         "census_person_id", "census_household_id",
         "age", "sex", "employed", "studies",
-        "number_of_cars", 
+        "number_of_cars",
         "household_size", "consumption_units",
         "socioprofessional_class"
-    ]]
+    ] + optional_vehicle_columns]
 
     # Attach matching information
     df_matching = context.stage("synthesis.population.matched")

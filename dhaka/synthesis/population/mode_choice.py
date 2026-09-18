@@ -171,6 +171,35 @@ def income_fare_scale(model, income_class):
     return scale
 
 
+# Household vehicle-count column per ownership-constrained mode. The Java side
+# reads the same counts from the MATSim person attributes householdCars /
+# householdMotorcycles / householdBikes.
+OWNERSHIP_COLUMNS = {
+    "car": "number_of_cars",
+    "motorcycle": "number_of_motorcycles",
+    "bike": "number_of_bikes",
+}
+
+
+def ownership_constant_matrix(model, modes, vehicle_counts):
+    """(n_trips, n_modes) matrix holding each mode's non_owner_constant where
+    the trip-maker's household owns none of that vehicle, else 0.
+
+    MUST stay identical to DhakaModeParameters.getOwnershipConstant(Person,
+    mode). vehicle_counts maps mode -> array of household counts; NaN (unknown)
+    is treated as an owner, i.e. no penalty, exactly as Java treats a missing
+    attribute."""
+    n_trips = len(next(iter(vehicle_counts.values())))
+    matrix = np.zeros((n_trips, len(modes)))
+    for mode, spec in model["ownership_constants"].items():
+        if not isinstance(spec, dict) or mode not in modes:
+            continue
+        counts = np.asarray(vehicle_counts[mode], dtype = float)
+        non_owner = np.nan_to_num(counts, nan = 1.0) == 0
+        matrix[non_owner, modes.index(mode)] = spec["non_owner_constant"]
+    return matrix
+
+
 def apply_model(df, model, random_seed):
     modes = model["modes"]
     reference_mode = model["reference_mode"]
@@ -199,6 +228,9 @@ def apply_model(df, model, random_seed):
          + model["beta_fare_per_bdt"] * fare_scale[:, None] * fare_matrix)
     for mode in non_ref_alts:
         U[:, alt_index[mode]] += model["asc"][mode]
+
+    U += ownership_constant_matrix(model, modes, {
+        mode: df[column].to_numpy() for mode, column in OWNERSHIP_COLUMNS.items()})
 
     U = U - U.max(axis = 1, keepdims = True)
     exp_U = np.exp(U)
@@ -235,8 +267,9 @@ def execute(context):
     df_trips["distance_m"] = compute_trip_distances(df_trips, df_locations)
 
     # Household income class per trip, for income-scaled cost sensitivity.
-    df_income = context.stage("synthesis.population.sampled")[["person_id", "income_class"]]
-    df_trips = df_trips.merge(df_income, on = "person_id", how = "left")
+    df_person_attributes = context.stage("synthesis.population.sampled")[
+        ["person_id", "income_class"] + list(OWNERSHIP_COLUMNS.values())]
+    df_trips = df_trips.merge(df_person_attributes, on = "person_id", how = "left")
     print("Trips with a resolved income class: %.1f%%" % (
         100 * (df_trips["income_class"].fillna(-1) >= 0).mean()))
 

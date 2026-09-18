@@ -6,7 +6,8 @@ import numpy as np
 import pandas as pd
 import geopandas as gpd
 
-from dhaka.synthesis.population.mode_choice import compute_fare_bdt, income_fare_scale
+from dhaka.synthesis.population.mode_choice import (
+    compute_fare_bdt, income_fare_scale, ownership_constant_matrix, OWNERSHIP_COLUMNS)
 
 """
 OFFLINE pre-calibration of dhaka_mode_parameters.json's ASCs, run once before
@@ -72,9 +73,9 @@ TOLERANCE = 1e-5
 
 
 def load_trips(trips_path):
-    """Distance, target mode and household income class per trip. Income comes
-    from the persons/households CSVs written next to the GeoPackage (person ->
-    household -> `income`, which dhaka/income.py sets to the ordinal class)."""
+    """Distance, target mode, household income class and household vehicle
+    counts per trip. Household attributes come from the persons/households CSVs
+    written next to the GeoPackage (person -> household)."""
     df = gpd.read_file(trips_path)
 
     output_dir = os.path.dirname(trips_path)
@@ -82,16 +83,19 @@ def load_trips(trips_path):
     df_persons = pd.read_csv(os.path.join(output_dir, prefix + "persons.csv"), sep = ";",
                              usecols = ["person_id", "household_id"])
     df_households = pd.read_csv(os.path.join(output_dir, prefix + "households.csv"), sep = ";",
-                                usecols = ["household_id", "income"])
+                                usecols = ["household_id", "income"] + list(OWNERSHIP_COLUMNS.values()))
     df = df.merge(df_persons, on = "person_id", how = "left").merge(
         df_households, on = "household_id", how = "left")
 
     distance_m = df.geometry.length.to_numpy(dtype = float)
-    donor_mode = df["mode_hts_donor"].to_numpy()
-    income_class = df["income"].to_numpy(dtype = float)
-
     usable = np.isfinite(distance_m)
-    return distance_m[usable], donor_mode[usable], income_class[usable]
+
+    vehicle_counts = {
+        mode: df[column].to_numpy(dtype = float)[usable]
+        for mode, column in OWNERSHIP_COLUMNS.items()
+    }
+    return (distance_m[usable], df["mode_hts_donor"].to_numpy()[usable],
+            df["income"].to_numpy(dtype = float)[usable], vehicle_counts)
 
 
 def compute_target_shares(modes, donor_mode):
@@ -118,14 +122,28 @@ def build_utility_base(model, modes, distance_m, income_class):
             + model["beta_fare_per_bdt"] * fare_scale[:, None] * fare_bdt)
 
 
-def logit_shares(utility_base, asc):
-    utility = utility_base + asc
+def choice_probabilities(utility_base, asc, ownership):
+    utility = utility_base + asc + ownership
     utility = utility - utility.max(axis = 1, keepdims = True)
     exponentiated = np.exp(utility)
-    return (exponentiated / exponentiated.sum(axis = 1, keepdims = True)).mean(axis = 0)
+    return exponentiated / exponentiated.sum(axis = 1, keepdims = True)
 
 
 def precalibrate(trips_path, dry_run):
+    """Fits the ASCs and the vehicle-ownership constants JOINTLY.
+
+    Two targets per ownership-constrained mode (car, motorcycle, bike): its
+    overall share, and the fraction of its trips made by households that do
+    NOT own that vehicle (ownership_constants.*.target_non_owner_trip_share,
+    from the DTCA survey). Every other mode has the single overall-share
+    target. Each round splits a vehicle mode's modelled trips into owner and
+    non-owner segments and corrects each segment by ln(target / modelled):
+    the ASC carries the owner level, non_owner_constant the difference.
+
+    Feasibility is checked first. If owning households make too few trips to
+    supply the owner share of a target, the two targets contradict each other
+    and the iteration would drive the ASC to infinity instead of converging,
+    so the script stops and says so rather than writing nonsense."""
     with open(PARAMETERS_PATH, "r", encoding = "utf-8") as f:
         model = json.load(f)
 
@@ -133,45 +151,114 @@ def precalibrate(trips_path, dry_run):
     reference_mode = model["reference_mode"]
     reference_index = modes.index(reference_mode)
 
-    distance_m, donor_mode, income_class = load_trips(trips_path)
+    distance_m, donor_mode, income_class, vehicle_counts = load_trips(trips_path)
+    n_trips = len(distance_m)
     print("Loaded %d trips with usable distances (median %.0f m); income class resolved for %.1f%%" % (
-        len(distance_m), np.median(distance_m), 100 * np.mean(np.nan_to_num(income_class, nan = -1) >= 0)))
+        n_trips, np.median(distance_m), 100 * np.mean(np.nan_to_num(income_class, nan = -1) >= 0)))
 
     target = compute_target_shares(modes, donor_mode)
     utility_base = build_utility_base(model, modes, distance_m, income_class)
 
-    asc_start = np.array([0.0 if m == reference_mode else model["asc"][m] for m in modes])
-    share_start = logit_shares(utility_base, asc_start)
+    owned = {
+        mode: spec for mode, spec in model["ownership_constants"].items()
+        if isinstance(spec, dict) and mode in modes
+    }
+    non_owner = {
+        mode: np.nan_to_num(vehicle_counts[mode], nan = 1.0) == 0 for mode in owned
+    }
 
-    asc = asc_start.copy()
+    print("\nOwnership feasibility (owner households must supply the owner share of each target):")
+    infeasible = []
+    for mode, spec in owned.items():
+        owner_trip_share = 1.0 - non_owner[mode].mean()
+        needed = (1.0 - spec["target_non_owner_trip_share"]) * target[modes.index(mode)]
+        rate = needed / owner_trip_share if owner_trip_share > 0 else float("inf")
+        print("  %-11s owners make %5.2f%% of trips; they must use %s on %5.1f%% of them" % (
+            mode, 100 * owner_trip_share, mode, 100 * rate))
+        if rate >= 0.95:
+            infeasible.append(mode)
+    if infeasible:
+        raise RuntimeError(
+            "Ownership targets are infeasible for %s: owning households make too few trips to "
+            "supply the owner share of the mode target. Check that vehicle ownership reached the "
+            "synthetic population, and whether trip-chain donors are matched consistently with "
+            "ownership." % ", ".join(infeasible))
+
+    asc = np.array([0.0 if m == reference_mode else model["asc"][m] for m in modes])
+    delta = { mode: float(spec["non_owner_constant"]) for mode, spec in owned.items() }
+    asc_start, delta_start = asc.copy(), dict(delta)
+
+    def ownership_matrix():
+        spec = { m: { "non_owner_constant": d } for m, d in delta.items() }
+        return ownership_constant_matrix({ "ownership_constants": spec }, modes, vehicle_counts)
+
+    def non_owner_shares(probabilities):
+        return {
+            mode: probabilities[non_owner[mode], modes.index(mode)].sum()
+                  / probabilities[:, modes.index(mode)].sum()
+            for mode in owned
+        }
+
+    share_start = choice_probabilities(utility_base, asc, ownership_matrix()).mean(axis = 0)
+
     for round_index in range(MAXIMUM_ROUNDS):
-        share = logit_shares(utility_base, asc)
-        if np.abs(share - target).max() < TOLERANCE:
+        probabilities = choice_probabilities(utility_base, asc, ownership_matrix())
+        modelled = probabilities.sum(axis = 0)
+        share = modelled / n_trips
+        segment = non_owner_shares(probabilities)
+
+        converged = np.abs(share - target).max() < TOLERANCE and all(
+            abs(segment[m] - owned[m]["target_non_owner_trip_share"]) < 1e-4 for m in owned)
+        if converged:
             break
 
-        # Same update rule as calibrate_asc.py, re-based on the reference
-        # mode so its implicit ASC stays pinned at 0 (only utility
-        # DIFFERENCES matter in a logit model).
-        delta = np.log(np.maximum(target, 1e-12) / np.maximum(share, 1e-12))
-        delta = delta - delta[reference_index]
-        asc = asc + delta
-        asc[reference_index] = 0.0
+        correction = np.log(np.maximum(target * n_trips, 1e-12) / np.maximum(modelled, 1e-12))
+        for mode, spec in owned.items():
+            i = modes.index(mode)
+            modelled_non_owner = probabilities[non_owner[mode], i].sum()
+            modelled_owner = modelled[i] - modelled_non_owner
+            target_total = target[i] * n_trips
+            s_no = spec["target_non_owner_trip_share"]
+            owner_correction = np.log(max((1 - s_no) * target_total, 1e-12) / max(modelled_owner, 1e-12))
+            non_owner_correction = np.log(max(s_no * target_total, 1e-12) / max(modelled_non_owner, 1e-12))
+            correction[i] = owner_correction
+            delta[mode] += non_owner_correction - owner_correction
 
-    share = logit_shares(utility_base, asc)
-    print("Converged after %d rounds (largest remaining share error %.4f points)\n" % (
+        # Re-base on the reference mode so its (owner) ASC stays pinned at 0.
+        # The ownership constants are within-mode differences and are
+        # unaffected by a common shift.
+        correction = correction - correction[reference_index]
+        asc = asc + correction
+        asc[reference_index] = 0.0
+    else:
+        raise RuntimeError("Did not converge in %d rounds" % MAXIMUM_ROUNDS)
+
+    probabilities = choice_probabilities(utility_base, asc, ownership_matrix())
+    share = probabilities.mean(axis = 0)
+    segment = non_owner_shares(probabilities)
+    print("\nConverged after %d rounds (largest remaining share error %.4f points)\n" % (
         round_index + 1, 100.0 * np.abs(share - target).max()))
 
-    header = ("mode", "target", "before", "after", "old_asc", "new_asc")
-    print("%-14s%10s%10s%10s%12s%12s" % header)
+    print("%-14s%10s%10s%10s%12s%12s" % ("mode", "target", "before", "after", "old_asc", "new_asc"))
     for i, mode in enumerate(modes):
         suffix = "  (reference)" if mode == reference_mode else ""
         print("%-14s%9.2f%%%9.2f%%%9.2f%%%12.3f%12.3f%s" % (
             mode, 100 * target[i], 100 * share_start[i], 100 * share[i],
             asc_start[i], asc[i], suffix))
 
+    print("\n%-14s%18s%14s%16s%16s" % (
+        "ownership", "target non-owner", "modelled", "old constant", "new constant"))
+    for mode, spec in owned.items():
+        print("%-14s%17.1f%%%13.1f%%%16.3f%16.3f" % (
+            mode, 100 * spec["target_non_owner_trip_share"], 100 * segment[mode],
+            delta_start[mode], delta[mode]))
+
     if dry_run:
         print("\n--dry-run: %s NOT modified." % PARAMETERS_PATH)
         return
+
+    for mode in owned:
+        model["ownership_constants"][mode]["non_owner_constant"] = round(float(delta[mode]), 4)
 
     for i, mode in enumerate(modes):
         if mode != reference_mode:

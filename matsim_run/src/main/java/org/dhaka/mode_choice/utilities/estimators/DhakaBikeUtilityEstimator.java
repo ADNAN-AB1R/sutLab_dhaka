@@ -22,6 +22,9 @@ public class DhakaBikeUtilityEstimator implements DhakaUtilityEstimator {
 
     @Override
     public double estimateUtility(Person person, double travelTimeMinutes, double distanceMeters) {
-        return parameters.getBetaDuration() * travelTimeMinutes;
+        // bike is the reference mode (ASC 0), but the ownership constant
+        // still applies: it is a within-mode owner/non-owner difference.
+        return parameters.getOwnershipConstant(person, "bike")
+            + parameters.getBetaDuration() * travelTimeMinutes;
     }
 }
