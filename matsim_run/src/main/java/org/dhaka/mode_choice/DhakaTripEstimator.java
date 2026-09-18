@@ -6,6 +6,8 @@ import java.util.Map;
 
 import com.google.inject.Inject;
 
+import org.matsim.api.core.v01.Coord;
+import org.matsim.api.core.v01.population.Activity;
 import org.matsim.api.core.v01.population.Leg;
 import org.matsim.api.core.v01.population.Person;
 import org.matsim.api.core.v01.population.PlanElement;
@@ -14,6 +16,7 @@ import org.matsim.contribs.discrete_mode_choice.components.estimators.AbstractTr
 import org.matsim.contribs.discrete_mode_choice.model.DiscreteModeChoiceTrip;
 import org.matsim.contribs.discrete_mode_choice.model.trip_based.candidates.TripCandidate;
 import org.matsim.core.router.TripRouter;
+import org.matsim.core.utils.geometry.CoordUtils;
 import org.matsim.core.utils.timing.TimeInterpretation;
 import org.matsim.facilities.ActivityFacilities;
 
@@ -53,8 +56,11 @@ public class DhakaTripEstimator extends AbstractTripRouterEstimator {
     @Override
     protected double estimateTrip(Person person, String mode, DiscreteModeChoiceTrip trip,
             List<TripCandidate> previousTrips, List<? extends PlanElement> routedTrip) {
+        // Travel TIME is the routed time, summed over every leg including
+        // access/egress walks - that is what routing is for, and it is where
+        // congestion enters mode choice.
         double travelTimeMinutes = 0.0;
-        double distanceMeters = 0.0;
+        double routedDistanceMeters = 0.0;
 
         for (PlanElement element : routedTrip) {
             if (element instanceof Leg) {
@@ -63,14 +69,30 @@ public class DhakaTripEstimator extends AbstractTripRouterEstimator {
 
                 Route route = leg.getRoute();
                 if (route != null) {
-                    distanceMeters += route.getDistance();
+                    routedDistanceMeters += route.getDistance();
                 }
             }
         }
 
+        // Fare DISTANCE is the straight-line origin-destination distance, NOT
+        // the routed one. The fare rates in dhaka_mode_parameters.json were
+        // calibrated per straight-line km (dhaka/mode_choice/calibrate_fares.py
+        // fits the survey's reported cost against O-D distance), and the
+        // Python seed stage and precalibrate_asc.py apply them that way.
+        // Charging them per routed km instead - route.getDistance() summed
+        // over all legs, access/egress walks included - overcharged every
+        // paid mode by the network detour ratio (~1.65x for road modes): a
+        // 4 km car trip cost 282 BDT here against 171 in calibration, about
+        // -3.8 utils. That collapsed car in the first calibration run on
+        // 2026-09-18 while the offline model reproduced targets exactly.
+        double fareDistanceMeters = straightLineDistance(trip);
+        if (Double.isNaN(fareDistanceMeters)) {
+            fareDistanceMeters = routedDistanceMeters;
+        }
+
         DhakaUtilityEstimator estimator = estimators.get(mode);
         if (estimator != null) {
-            return estimator.estimateUtility(person, travelTimeMinutes, distanceMeters);
+            return estimator.estimateUtility(person, travelTimeMinutes, fareDistanceMeters);
         }
 
         // Graceful fallback for modes outside the 6-mode milestone (e.g.
@@ -87,5 +109,20 @@ public class DhakaTripEstimator extends AbstractTripRouterEstimator {
         // trips) that the exact fallback value has negligible effect, and
         // it can never be freshly CHOSEN as a new candidate mode anyway.
         return parameters.getBetaDuration() * travelTimeMinutes;
+    }
+
+    /** Straight-line distance between the trip's origin and destination
+     * activities, or NaN if either has no coordinate (the caller then falls
+     * back to the routed distance). Dhaka population activities always carry
+     * x/y, so the fallback exists only for robustness. */
+    private static double straightLineDistance(DiscreteModeChoiceTrip trip) {
+        Activity origin = trip.getOriginActivity();
+        Activity destination = trip.getDestinationActivity();
+        Coord from = origin == null ? null : origin.getCoord();
+        Coord to = destination == null ? null : destination.getCoord();
+        if (from == null || to == null) {
+            return Double.NaN;
+        }
+        return CoordUtils.calcEuclideanDistance(from, to);
     }
 }
