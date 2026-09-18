@@ -2,6 +2,10 @@ __pycache__
 env
 cache*
 output*
+# The bare output* pattern above (meant for the output/ data directory) also
+# matched dhaka/output.py - a pipeline SOURCE file, the Dhaka synthesis output
+# stage - which was therefore never under version control. Keep it tracked.
+!dhaka/output.py
 raw_data*
 
 .vscode
