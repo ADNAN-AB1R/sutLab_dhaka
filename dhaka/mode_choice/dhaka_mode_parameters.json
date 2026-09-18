@@ -12,12 +12,12 @@
   "beta_duration_per_minute": -0.112,
   "beta_fare_per_bdt": -0.034,
   "asc": {
-    "car": 3.9755,
-    "motorcycle": 0.9924,
-    "pt": -0.8678,
-    "rickshaw": 2.5796,
-    "paratransit": -3.4322,
-    "walk": 3.0016
+    "car": 3.2718,
+    "motorcycle": 0.7076,
+    "pt": -0.0048,
+    "rickshaw": 1.8209,
+    "paratransit": -2.1426,
+    "walk": 1.981
   },
   "source": "Hoque, Ismamul - MSc Thesis (paper/Ismamul Hoque Msc Thesis.pdf), Table 4.1 mode choice component (12-alternative MNL, bicycle reference, 927 observations, GAUSS MAXLIK). Thesis ASCs: Bicycle(ref)=0.00, Bus=1.28***, MRT=1.37***, CNG=3.31***, Office Vehicle=1.20**, Ride-share Bike=-0.03(ns), Ride-share Car=4.60***, Rickshaw=2.27***, Lagoona=-0.502(ns), Private Motorcycle=1.87***, Private Car=3.09***, Walk=0.87*. beta_duration/beta_fare are pooled across all 12 alternatives in the thesis, not mode-specific. Units confirmed (not assumed) via the thesis's own stated VTTS: (0.112/0.034)*60 = 197.6 BDT/hr matches the thesis's reported ~200 BDT/hr only if duration is in MINUTES and fare is in raw BDT (not thousands).",
   "mode_mapping": {
@@ -191,17 +191,17 @@
   "ownership_constants": {
     "car": {
       "household_attribute": "householdCars",
-      "non_owner_constant": -4.3271,
+      "non_owner_constant": -4.4954,
       "target_non_owner_trip_share": 0.145
     },
     "motorcycle": {
       "household_attribute": "householdMotorcycles",
-      "non_owner_constant": -4.5824,
+      "non_owner_constant": -3.8602,
       "target_non_owner_trip_share": 0.093
     },
     "bike": {
       "household_attribute": "householdBikes",
-      "non_owner_constant": -5.4588,
+      "non_owner_constant": -5.1774,
       "target_non_owner_trip_share": 0.21
     },
     "source": "Vehicle ownership, modelled as a UTILITY PENALTY for persons whose household owns none of that vehicle type (non_owner_constant is added to that mode's utility), not as a hard availability gate. Evidence from the DTCA survey (q15_vehicles per member), on the SAME basis the population is synthesised from - study-area households, expansion-weighted: 11.1% of households own a car, 20.6% a motorcycle, 2.1% a bicycle (the synthetic population reproduces this: 10.9 / 20.5 / 2.2%). Car-owning households are under-sampled and heavily up-weighted, so the unweighted all-survey figures (2.7 / 9.2 / 2.5%) are NOT comparable. Owning households make 85.5% of car, 90.7% of motorcycle and 79.0% of bike trips, so ownership dominates but is NOT absolute - non-owners still make 14.5% / 9.3% / 21.0% of those trips, through staff and company cars, ride-hailing (Uber/Pathao), chauffeured or family vehicles, and borrowed bikes. A hard gate would delete those trips; the penalty keeps them possible and is calibrated so the non-owner share of each mode's trips reproduces target_non_owner_trip_share (dhaka/mode_choice/precalibrate_asc.py fits it jointly with the ASCs). This REPLACES DiscreteModeChoice's built-in 'Car' mode availability, which gated car on a driving licence: only 4.9% of persons hold one, yet 60.3% of survey car trips are made by people without a licence (82% of those 'drive by driver' - chauffeured). That gate made most real car use impossible and is the likely main cause of car collapsing from 7.2% to ~2.7% in the September runs. It also read an attribute named 'carAvail', so the population's 'carAvailability' was never consulted at all."
