@@ -12,12 +12,12 @@
   "beta_duration_per_minute": -0.112,
   "beta_fare_per_bdt": -0.034,
   "asc": {
-    "car": 4.27,
-    "motorcycle": 1.1771,
-    "pt": -0.2324,
-    "rickshaw": 2.8937,
-    "paratransit": -4.283,
-    "walk": 3.704
+    "car": 3.9755,
+    "motorcycle": 0.9924,
+    "pt": -0.8678,
+    "rickshaw": 2.5796,
+    "paratransit": -3.4322,
+    "walk": 3.0016
   },
   "source": "Hoque, Ismamul - MSc Thesis (paper/Ismamul Hoque Msc Thesis.pdf), Table 4.1 mode choice component (12-alternative MNL, bicycle reference, 927 observations, GAUSS MAXLIK). Thesis ASCs: Bicycle(ref)=0.00, Bus=1.28***, MRT=1.37***, CNG=3.31***, Office Vehicle=1.20**, Ride-share Bike=-0.03(ns), Ride-share Car=4.60***, Rickshaw=2.27***, Lagoona=-0.502(ns), Private Motorcycle=1.87***, Private Car=3.09***, Walk=0.87*. beta_duration/beta_fare are pooled across all 12 alternatives in the thesis, not mode-specific. Units confirmed (not assumed) via the thesis's own stated VTTS: (0.112/0.034)*60 = 197.6 BDT/hr matches the thesis's reported ~200 BDT/hr only if duration is in MINUTES and fare is in raw BDT (not thousands).",
   "mode_mapping": {
@@ -105,15 +105,36 @@
       "rationale": "KNOWN RESIDUAL BIAS, deliberately left as-is for now: pt keeps Bus's ASC (1.28) rather than the share-weighted 1.023, overstating pt by ~0.26 utils (~2.3 min of travel time at beta_duration). The bucket is 79% bus so this is far milder than the car/motorcycle problem was (which was ~0.96 utils / 8.6 min). The cleaner fix is splitting Lagoona/Tempu out as its own road-based teleported mode - it is a human-hauler that is not in the GTFS at all and is currently being routed on bus transit lines it does not actually run on."
     }
   },
-  "fallback_speed_kmh": {
-    "note": "DOOR-TO-DOOR BEELINE-EFFECTIVE speed per mode: straight-line O-D distance divided by the trip's TOTAL simulated travel time - every leg included (access/egress walks, waiting, transfers). Used by the Python seed assignment and by precalibrate_asc.py, which both work in straight-line distance and a single time per trip, so this must be door-to-door, not per leg. Measured from simulation_output/ITERS/it.0/0.trips.csv.gz (euclidean_distance / trav_time by main_mode) of the 2026-09-18 run with road modes on the network, vehicle ownership, and fares charged on straight-line distance. The previous values were measured PER LEG, which silently dropped everything but the main vehicle leg: for pt that excluded the walk to the stop, the wait and the walk from it, so the proxy said 13.62 km/h against a real door-to-door 7.61 (79% too fast); car's access/egress walks made it 18.33 against 13.87 (32% too fast). Pre-calibration therefore believed pt and car far more attractive than the simulation found them, and the calibration run collapsed both. walk is teleported and still measures exactly 3.05 km/h = 1.1 m/s / 1.3. Re-measure after any change that alters congestion or routing.",
-    "bike": 6.71,
-    "car": 13.87,
-    "motorcycle": 13.68,
-    "pt": 7.61,
-    "rickshaw": 5.72,
-    "paratransit": 12.15,
-    "walk": 3.05
+  "travel_time_model": {
+    "bike": {
+      "overhead_min": 5.61,
+      "min_per_km": 7.35
+    },
+    "car": {
+      "overhead_min": 5.07,
+      "min_per_km": 2.67
+    },
+    "motorcycle": {
+      "overhead_min": 4.96,
+      "min_per_km": 2.84
+    },
+    "pt": {
+      "overhead_min": 17.24,
+      "min_per_km": 3.59
+    },
+    "rickshaw": {
+      "overhead_min": 6.51,
+      "min_per_km": 8.42
+    },
+    "paratransit": {
+      "overhead_min": 5.02,
+      "min_per_km": 3.39
+    },
+    "walk": {
+      "overhead_min": 0.0,
+      "min_per_km": 19.7
+    },
+    "note": "Door-to-door travel-time proxy per mode: time_min = overhead_min + min_per_km * straight-line km. Used ONLY on the Python side - the synthesis-time seed assignment and dhaka/mode_choice/precalibrate_asc.py, which have no routing; the Java estimator uses real routed times. Fitted by OLS of total simulated trip time (every leg: access/egress walks, waiting, transfers) on euclidean_distance per main_mode, from simulation_output/ITERS/it.0/0.trips.csv.gz of the 2026-09-18 run (road modes on the network, ownership, fares on straight-line distance), top 1% of times trimmed. Replaces fallback_speed_kmh, a single constant speed per mode, which could not represent fixed overhead: door-to-door car speed runs from 6.6 km/h under 1 km to 18.7 over 10 km, pt from 3.1 to 11.5, but rickshaw only 4.2 to 6.5. Most trips are short (median 1.9 km), so a constant speed made car/pt/motorcycle about twice as fast as reality on short trips while barely flattering rickshaw - offline, car and pt looked competitive on short trips that the simulation then handed to rickshaw (rickshaw 30.1% -> 40.9% in one iteration). Interpretation: road modes carry ~5 min fixed overhead, pt ~17 min (walk to stop + wait). walk fits exactly (0 overhead, 19.7 min/km = 3.05 km/h = 1.1 m/s / 1.3) because it is teleported. R^2: rickshaw 0.76, bike 0.72, paratransit 0.51, motorcycle 0.48, pt 0.47, car 0.39 - the remainder is genuine route/congestion variation. Re-fit after any change that alters congestion or routing."
   },
   "fare_assumptions": {
     "car": {
@@ -170,17 +191,17 @@
   "ownership_constants": {
     "car": {
       "household_attribute": "householdCars",
-      "non_owner_constant": -4.2529,
+      "non_owner_constant": -4.3271,
       "target_non_owner_trip_share": 0.145
     },
     "motorcycle": {
       "household_attribute": "householdMotorcycles",
-      "non_owner_constant": -5.1251,
+      "non_owner_constant": -4.5824,
       "target_non_owner_trip_share": 0.093
     },
     "bike": {
       "household_attribute": "householdBikes",
-      "non_owner_constant": -5.7146,
+      "non_owner_constant": -5.4588,
       "target_non_owner_trip_share": 0.21
     },
     "source": "Vehicle ownership, modelled as a UTILITY PENALTY for persons whose household owns none of that vehicle type (non_owner_constant is added to that mode's utility), not as a hard availability gate. Evidence from the DTCA survey (q15_vehicles per member), on the SAME basis the population is synthesised from - study-area households, expansion-weighted: 11.1% of households own a car, 20.6% a motorcycle, 2.1% a bicycle (the synthetic population reproduces this: 10.9 / 20.5 / 2.2%). Car-owning households are under-sampled and heavily up-weighted, so the unweighted all-survey figures (2.7 / 9.2 / 2.5%) are NOT comparable. Owning households make 85.5% of car, 90.7% of motorcycle and 79.0% of bike trips, so ownership dominates but is NOT absolute - non-owners still make 14.5% / 9.3% / 21.0% of those trips, through staff and company cars, ride-hailing (Uber/Pathao), chauffeured or family vehicles, and borrowed bikes. A hard gate would delete those trips; the penalty keeps them possible and is calibrated so the non-owner share of each mode's trips reproduces target_non_owner_trip_share (dhaka/mode_choice/precalibrate_asc.py fits it jointly with the ASCs). This REPLACES DiscreteModeChoice's built-in 'Car' mode availability, which gated car on a driving licence: only 4.9% of persons hold one, yet 60.3% of survey car trips are made by people without a licence (82% of those 'drive by driver' - chauffeured). That gate made most real car use impossible and is the likely main cause of car collapsing from 7.2% to ~2.7% in the September runs. It also read an attribute named 'carAvail', so the population's 'carAvailability' was never consulted at all."

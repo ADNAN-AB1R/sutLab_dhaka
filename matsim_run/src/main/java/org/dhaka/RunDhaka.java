@@ -12,6 +12,7 @@ import org.matsim.core.router.RoutingModeMainModeIdentifier;
 import org.matsim.core.scenario.ScenarioUtils;
 
 import org.dhaka.mode_choice.DhakaModeChoiceModule;
+import org.dhaka.routing.SpeedCappedRoutingModule;
 
 /**
  * Runs the Dhaka MATSim scenario assembled by dhaka/matsim/assemble_scenario.py
@@ -90,6 +91,14 @@ public class RunDhaka {
         // tripEstimator param references.
         controler.addOverridingModule(new DiscreteModeChoiceModule());
         controler.addOverridingModule(new DhakaModeChoiceModule());
+
+        // Route each speed-capped mode (rickshaw, bike, paratransit,
+        // motorcycle) at its vehicle's real top speed. Without this the router
+        // plans every network mode at car speed and mode choice sees a
+        // rickshaw as fast as a car - see SpeedCappedTravelTime.
+        SpeedCappedRoutingModule speedCaps = new SpeedCappedRoutingModule(scenario);
+        System.out.println("Speed-capped routing for: " + speedCaps.getCappedModes());
+        controler.addOverridingModule(speedCaps);
 
         controler.run();
     }

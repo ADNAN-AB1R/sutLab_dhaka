@@ -7,7 +7,8 @@ import pandas as pd
 import geopandas as gpd
 
 from dhaka.synthesis.population.mode_choice import (
-    compute_fare_bdt, income_fare_scale, ownership_constant_matrix, OWNERSHIP_COLUMNS)
+    compute_fare_bdt, income_fare_scale, ownership_constant_matrix, OWNERSHIP_COLUMNS,
+    proxy_travel_time_min)
 
 """
 OFFLINE pre-calibration of dhaka_mode_parameters.json's ASCs, run once before
@@ -34,7 +35,7 @@ What it CANNOT do, which is why MATSim rounds are still required afterwards:
   - car time comes from the congested network and pt time from
     SwissRailRaptor (including access/wait/transfer). Neither has a closed
     form here; both fall back to documented proxy speeds (see
-    dhaka_mode_parameters.json's "fallback_speed_kmh"), so their ASCs will
+    dhaka_mode_parameters.json's "travel_time_model"), so their ASCs will
     still be off. Every other mode is teleported, and for those the proxy
     speed is exact by construction.
   - MATSim chooses modes per TOUR (modelType=Tour) under a vehicle-
@@ -110,7 +111,7 @@ def build_utility_base(model, modes, distance_m, income_class):
     calibrated - computed once, not once per round. Cost sensitivity is scaled
     per trip by household income, identically to the Java estimator."""
     time_minutes = np.column_stack([
-        distance_m / 1000.0 / model["fallback_speed_kmh"][mode] * 60.0 for mode in modes
+        proxy_travel_time_min(model, mode, distance_m) for mode in modes
     ])
     fare_bdt = np.column_stack([
         np.broadcast_to(

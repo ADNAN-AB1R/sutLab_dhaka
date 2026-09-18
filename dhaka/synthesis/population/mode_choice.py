@@ -36,8 +36,8 @@ DTCA survey cannot support (no usable trip length - see
 dhaka/mode_choice/build_estimation_dataset.py). Licence is still respected,
 via DiscreteModeChoice's modeAvailability=Car. Duration comes from a distance/fallback-speed proxy (no real
 routing available yet at this pipeline stage - see
-dhaka_mode_parameters.json's "fallback_speed_kmh", not thesis-sourced, kept
-only for this proxy); fare comes from the same per-mode cost construction
+dhaka_mode_parameters.json's "travel_time_model" - fixed overhead plus a
+per-km rate per mode, fitted to simulated door-to-door trip times); fare comes from the same per-mode cost construction
 matsim_run's DhakaCostCalculator implements in Java (ported here so the
 seed assignment is consistent with the in-simulation model) - see
 dhaka_mode_parameters.json's "fare_assumptions" for each mode's formula and
@@ -149,6 +149,16 @@ def compute_fare_bdt(mode, distance_m, fare_assumptions):
     return np.zeros_like(distance_km)  # bike, walk
 
 
+def proxy_travel_time_min(model, mode, distance_m):
+    """Door-to-door travel-time proxy in minutes for a straight-line distance:
+    overhead_min + min_per_km * km (dhaka_mode_parameters.json
+    "travel_time_model"). Shared by this stage and precalibrate_asc.py so the
+    seed plan and the offline ASC fit use the same proxy. The Java estimator
+    does not use it - it has real routed times."""
+    spec = model["travel_time_model"][mode]
+    return spec["overhead_min"] + spec["min_per_km"] * (np.asarray(distance_m, dtype = float) / 1000.0)
+
+
 def income_fare_scale(model, income_class):
     """Per-person multiplier on beta_fare_per_bdt, from the ordinal household
     income class (0-8, -1/NaN = not stated).
@@ -215,8 +225,7 @@ def apply_model(df, model, random_seed):
     # this pipeline stage (see module docstring).
     time_matrix = np.zeros((n_obs, n_alts))
     for mode in modes:
-        speed_m_per_min = model["fallback_speed_kmh"][mode] * 1000.0 / 60.0
-        time_matrix[:, alt_index[mode]] = distance_m / speed_m_per_min
+        time_matrix[:, alt_index[mode]] = proxy_travel_time_min(model, mode, distance_m)
 
     fare_matrix = np.zeros((n_obs, n_alts))
     for mode in modes:
