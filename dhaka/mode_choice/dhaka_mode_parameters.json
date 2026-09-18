@@ -12,12 +12,12 @@
   "beta_duration_per_minute": -0.112,
   "beta_fare_per_bdt": -0.034,
   "asc": {
-    "car": 5.4055,
-    "motorcycle": 3.0602,
-    "pt": 1.1577,
-    "rickshaw": 6.6319,
-    "paratransit": 1.6151,
-    "walk": 7.495
+    "car": 5.6244,
+    "motorcycle": 3.43,
+    "pt": 1.5185,
+    "rickshaw": 6.9591,
+    "paratransit": 1.888,
+    "walk": 7.7271
   },
   "source": "Hoque, Ismamul - MSc Thesis (paper/Ismamul Hoque Msc Thesis.pdf), Table 4.1 mode choice component (12-alternative MNL, bicycle reference, 927 observations, GAUSS MAXLIK). Thesis ASCs: Bicycle(ref)=0.00, Bus=1.28***, MRT=1.37***, CNG=3.31***, Office Vehicle=1.20**, Ride-share Bike=-0.03(ns), Ride-share Car=4.60***, Rickshaw=2.27***, Lagoona=-0.502(ns), Private Motorcycle=1.87***, Private Car=3.09***, Walk=0.87*. beta_duration/beta_fare are pooled across all 12 alternatives in the thesis, not mode-specific. Units confirmed (not assumed) via the thesis's own stated VTTS: (0.112/0.034)*60 = 197.6 BDT/hr matches the thesis's reported ~200 BDT/hr only if duration is in MINUTES and fare is in raw BDT (not thousands).",
   "mode_mapping": {
@@ -149,5 +149,22 @@
     },
     "note": "Calibrated by dhaka/mode_choice/calibrate_fares.py against the DTCA survey's reported trip costs (q55_total_cost). Only the LEVEL of each fare function is data-estimated; the SHAPE is retained from external tariff sources because ward-sampled distance is too noisy to identify a slope (66.3% of survey trips are intra-ward, giving an almost flat observed cost-vs-distance profile that is an artifact, not behaviour). Every rate here is an EFFECTIVE rate on this model's ward-sampled distance scale - valid because the survey and the synthetic population share that scale, but NOT a real Dhaka tariff. Re-run the script if the distance construction ever changes."
   },
-  "asc_provenance": "Pre-calibrated offline by dhaka/mode_choice/precalibrate_asc.py against the mode_hts_donor target shares, starting from the thesis's published ASCs (which are kept verbatim in this file's 'source' and 'composition' fields). The values in 'asc' are therefore NO LONGER the thesis values - see 'source' for those. They are still to be refined by MATSim calibration rounds via dhaka/mode_choice/calibrate_asc.py, which corrects the part of the gap only the simulation can reveal: congested car time, routed pt time, tour-level choice, and congestion feedback."
+  "asc_provenance": "Pre-calibrated offline by dhaka/mode_choice/precalibrate_asc.py against the mode_hts_donor target shares, starting from the thesis's published ASCs (which are kept verbatim in this file's 'source' and 'composition' fields). The values in 'asc' are therefore NO LONGER the thesis values - see 'source' for those. They are still to be refined by MATSim calibration rounds via dhaka/mode_choice/calibrate_asc.py, which corrects the part of the gap only the simulation can reveal: congested car time, routed pt time, tour-level choice, and congestion feedback.",
+  "income_scaling": {
+    "elasticity": 0.5,
+    "reference_income_bdt_per_month": 55000,
+    "class_midpoints_bdt_per_month": [
+      5000,
+      15000,
+      25000,
+      35000,
+      45000,
+      55000,
+      70000,
+      90000,
+      130000
+    ],
+    "formula": "beta_fare(person) = beta_fare_per_bdt * (income_bdt / reference_income_bdt) ** (-elasticity); persons with unknown income (class -1 or missing) get beta_fare_per_bdt unscaled",
+    "source": "Hoque's model has a single pooled beta_fare, which implies one VTTS of 197.6 BDT/h for everyone. Against implied wages from the DTCA income brackets that is 4.22x the wage for the Tk 10-20k bracket but 0.49x for >Tk 100k, where conventional VTTS is 0.3-0.5x the wage - the signature of a model estimated on affluent residence-choice respondents and applied to a poorer all-trip population. Scaling cost sensitivity with income is standard practice (eqasim's utility functions do the same). With beta_duration fixed, VTTS scales as income**elasticity. elasticity=0.5 is the cross-sectional income elasticity of VTTS typically found in meta-analyses (Abrantes & Wardman 2011; Wardman, Chintakayala & de Jong 2016) - a LITERATURE value, not estimated here. reference_income is the DTCA trip-weighted median household income (bracket Tk 50-60k, cumulative 46.8% -> 58.0%), so beta_fare is exactly Hoque's value for the median household and the transfer is preserved at the centre of the distribution. class_midpoints are bracket midpoints; the open top bracket (>Tk 100k) is set to 130k, an ASSUMPTION. What this does NOT fix: the average VTTS level stays Hoque's; it redistributes it. With elasticity 0.5 the VTTS/wage spread narrows from 0.49x-4.22x to roughly 0.75x-2.20x, so low-income travellers are still valued above their wage."
+  }
 }

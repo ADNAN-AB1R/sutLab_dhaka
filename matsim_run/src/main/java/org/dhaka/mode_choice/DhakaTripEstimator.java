@@ -70,7 +70,7 @@ public class DhakaTripEstimator extends AbstractTripRouterEstimator {
 
         DhakaUtilityEstimator estimator = estimators.get(mode);
         if (estimator != null) {
-            return estimator.estimateUtility(travelTimeMinutes, distanceMeters);
+            return estimator.estimateUtility(person, travelTimeMinutes, distanceMeters);
         }
 
         // Graceful fallback for modes outside the 6-mode milestone (e.g.

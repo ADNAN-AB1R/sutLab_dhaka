@@ -12,9 +12,9 @@ dhaka/mode_choice/dhaka_mode_parameters.json) to every synthetic trip,
 replacing the fixed mode inherited from each trip's matched HTS donor
 (dhaka.synthesis.population.trips) with a modeled choice that responds to
 that trip's REAL assigned distance (dhaka.synthesis.population.spatial.
-locations). This is the same model matsim_run's FittedMnlTripEstimator uses
-for in-simulation replanning - see that class's docstring for the shared
-formula (U = asc[mode] + beta_duration*time + beta_fare*fare). This stage
+locations). This is the same model matsim_run's DhakaTripEstimator uses for
+in-simulation replanning (U = asc[mode] + beta_duration*time
++ beta_fare(income)*fare - see income_fare_scale below). This stage
 only produces the INITIAL seed plan; the in-simulation estimator immediately
 starts re-optimizing it against real routed travel times once MATSim runs.
 
@@ -27,10 +27,14 @@ only available once dhaka.synthesis.population.spatial.locations exists -
 see that stage (and synthesis/population/activities.py) for how activity
 k's location is trip k's origin and activity k+1 is trip k's destination.
 
-Unlike the project's earlier HTS-fitted model, this one has no
-socio-demographic covariates at all - that's the thesis's actual
-specification (confirmed by reading its methodology), not a simplification
-made here. Duration comes from a distance/fallback-speed proxy (no real
+The thesis's specification has no socio-demographic covariates; the one
+added here is income-scaled cost sensitivity (dhaka_mode_parameters.json
+"income_scaling"), because the thesis's single pooled beta_fare implies a
+VTTS of 4.2x the wage for low-income households. Nothing else is added: per-
+mode age/sex/licence coefficients could only come from estimation, which the
+DTCA survey cannot support (no usable trip length - see
+dhaka/mode_choice/build_estimation_dataset.py). Licence is still respected,
+via DiscreteModeChoice's modeAvailability=Car. Duration comes from a distance/fallback-speed proxy (no real
 routing available yet at this pipeline stage - see
 dhaka_mode_parameters.json's "fallback_speed_kmh", not thesis-sourced, kept
 only for this proxy); fare comes from the same per-mode cost construction
@@ -82,6 +86,7 @@ def model_file_digest():
 def configure(context):
     context.stage("dhaka.synthesis.population.trips")
     context.stage("synthesis.population.spatial.locations")
+    context.stage("synthesis.population.sampled")
     context.config("random_seed")
     context.config("dhaka.mode_parameters_digest", model_file_digest())
 
@@ -144,6 +149,28 @@ def compute_fare_bdt(mode, distance_m, fare_assumptions):
     return np.zeros_like(distance_km)  # bike, walk
 
 
+def income_fare_scale(model, income_class):
+    """Per-person multiplier on beta_fare_per_bdt, from the ordinal household
+    income class (0-8, -1/NaN = not stated).
+
+    MUST stay identical to matsim_run's DhakaModeParameters.getBetaFare(Person):
+    this Python side builds the seed plan and the offline ASC pre-calibration,
+    the Java side makes every in-simulation choice, and if the two disagree the
+    pre-calibrated ASCs are fitted to a different model from the one that runs.
+    Unknown or out-of-range classes get multiplier 1 (unscaled), as in Java.
+    See dhaka_mode_parameters.json "income_scaling" for the rationale."""
+    scaling = model["income_scaling"]
+    midpoints = np.asarray(scaling["class_midpoints_bdt_per_month"], dtype = float)
+    scale_by_class = (midpoints / scaling["reference_income_bdt_per_month"]) ** (-scaling["elasticity"])
+
+    income_class = np.asarray(income_class, dtype = float)
+    scale = np.ones(len(income_class))
+    rounded = np.round(np.nan_to_num(income_class, nan = -1.0))
+    valid = (rounded >= 0) & (rounded < len(midpoints))
+    scale[valid] = scale_by_class[rounded[valid].astype(int)]
+    return scale
+
+
 def apply_model(df, model, random_seed):
     modes = model["modes"]
     reference_mode = model["reference_mode"]
@@ -166,7 +193,10 @@ def apply_model(df, model, random_seed):
     for mode in modes:
         fare_matrix[:, alt_index[mode]] = compute_fare_bdt(mode, distance_m, model["fare_assumptions"])
 
-    U = model["beta_duration_per_minute"] * time_matrix + model["beta_fare_per_bdt"] * fare_matrix
+    # Income-scaled cost sensitivity, one multiplier per trip (per person).
+    fare_scale = income_fare_scale(model, df["income_class"].to_numpy())
+    U = (model["beta_duration_per_minute"] * time_matrix
+         + model["beta_fare_per_bdt"] * fare_scale[:, None] * fare_matrix)
     for mode in non_ref_alts:
         U[:, alt_index[mode]] += model["asc"][mode]
 
@@ -203,6 +233,12 @@ def execute(context):
     model = load_model()
 
     df_trips["distance_m"] = compute_trip_distances(df_trips, df_locations)
+
+    # Household income class per trip, for income-scaled cost sensitivity.
+    df_income = context.stage("synthesis.population.sampled")[["person_id", "income_class"]]
+    df_trips = df_trips.merge(df_income, on = "person_id", how = "left")
+    print("Trips with a resolved income class: %.1f%%" % (
+        100 * (df_trips["income_class"].fillna(-1) >= 0).mean()))
 
     df_trips["mode_hts_donor"] = df_trips["mode"]
     df_trips["mode"] = apply_model(df_trips, model, context.config("random_seed"))

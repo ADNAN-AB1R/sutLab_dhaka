@@ -1,5 +1,7 @@
 package org.dhaka.mode_choice.utilities.estimators;
 
+import org.matsim.api.core.v01.population.Person;
+
 import com.google.inject.Inject;
 
 import org.dhaka.mode_choice.parameters.DhakaModeParameters;
@@ -14,7 +16,7 @@ public class DhakaWalkUtilityEstimator implements DhakaUtilityEstimator {
     }
 
     @Override
-    public double estimateUtility(double travelTimeMinutes, double distanceMeters) {
+    public double estimateUtility(Person person, double travelTimeMinutes, double distanceMeters) {
         return parameters.getAsc("walk") + parameters.getBetaDuration() * travelTimeMinutes;
     }
 }

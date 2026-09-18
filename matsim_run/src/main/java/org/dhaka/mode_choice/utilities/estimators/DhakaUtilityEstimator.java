@@ -8,6 +8,8 @@ package org.dhaka.mode_choice.utilities.estimators;
  * so nothing here needs it. Bound one-per-mode in DhakaModeChoiceModule and
  * dispatched by DhakaTripEstimator based on the candidate mode string.
  */
+import org.matsim.api.core.v01.population.Person;
+
 public interface DhakaUtilityEstimator {
-    double estimateUtility(double travelTimeMinutes, double distanceMeters);
+    double estimateUtility(Person person, double travelTimeMinutes, double distanceMeters);
 }

@@ -1,5 +1,7 @@
 package org.dhaka.mode_choice.utilities.estimators;
 
+import org.matsim.api.core.v01.population.Person;
+
 import com.google.inject.Inject;
 
 import org.dhaka.mode_choice.costs.DhakaPtCostModel;
@@ -16,10 +18,10 @@ public class DhakaPtUtilityEstimator implements DhakaUtilityEstimator {
     }
 
     @Override
-    public double estimateUtility(double travelTimeMinutes, double distanceMeters) {
+    public double estimateUtility(Person person, double travelTimeMinutes, double distanceMeters) {
         double fareBdt = costModel.calculateCost_bdt(distanceMeters);
         return parameters.getAsc("pt")
             + parameters.getBetaDuration() * travelTimeMinutes
-            + parameters.getBetaFare() * fareBdt;
+            + parameters.getBetaFare(person) * fareBdt;
     }
 }

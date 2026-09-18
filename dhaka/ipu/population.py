@@ -34,8 +34,15 @@ def execute(context):
     )
 
     # Prepare HTS seed data
+    # income_class (ordinal 0-8 from the DTCA household income bracket, -1 =
+    # unstated) is not a raking target - it rides through IPU raking and TRS
+    # integerisation as a passenger column, exactly like household_size, so
+    # each synthetic household inherits its seed household's income. Consumed
+    # by dhaka/income.py; needed by mode choice's income-scaled cost
+    # sensitivity (see dhaka/mode_choice/dhaka_mode_parameters.json
+    # "income_scaling"). Before this, every synthetic person had income 0.
     hts_df = df_persons_hts.merge(
-        df_households_hts[["household_id", "household_size", "household_weight"]],
+        df_households_hts[["household_id", "household_size", "household_weight", "income_class"]],
         on="household_id",
         how="left",
     )

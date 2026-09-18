@@ -3,10 +3,13 @@ package org.dhaka.mode_choice.parameters;
 import java.io.File;
 import java.io.IOException;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.google.inject.Singleton;
+
+import org.matsim.api.core.v01.population.Person;
 
 /**
  * Loads dhaka/mode_choice/dhaka_mode_parameters.json - the estimated mode
@@ -37,6 +40,11 @@ public class DhakaModeParameters {
     private final double betaFare;
     private final Map<String, Double> asc;
 
+    // beta_fare multiplier per ordinal income class (index = class 0-8),
+    // precomputed from "income_scaling" so estimating a trip costs an array
+    // lookup rather than a Math.pow.
+    private final double[] fareScaleByIncomeClass;
+
     @SuppressWarnings("unchecked")
     public DhakaModeParameters() {
         try {
@@ -51,6 +59,17 @@ public class DhakaModeParameters {
             for (Map.Entry<String, Object> entry : ((Map<String, Object>) raw.get("asc")).entrySet()) {
                 this.asc.put(entry.getKey(), ((Number) entry.getValue()).doubleValue());
             }
+
+            Map<String, Object> scaling = (Map<String, Object>) raw.get("income_scaling");
+            double elasticity = ((Number) scaling.get("elasticity")).doubleValue();
+            double referenceIncome = ((Number) scaling.get("reference_income_bdt_per_month")).doubleValue();
+            List<Number> midpoints = (List<Number>) scaling.get("class_midpoints_bdt_per_month");
+
+            this.fareScaleByIncomeClass = new double[midpoints.size()];
+            for (int i = 0; i < midpoints.size(); i++) {
+                this.fareScaleByIncomeClass[i] =
+                    Math.pow(midpoints.get(i).doubleValue() / referenceIncome, -elasticity);
+            }
         } catch (IOException e) {
             throw new RuntimeException("Could not load Dhaka mode parameters from " + PATH, e);
         }
@@ -64,8 +83,35 @@ public class DhakaModeParameters {
         return betaDuration;
     }
 
-    public double getBetaFare() {
-        return betaFare;
+    /**
+     * Cost sensitivity for this person: beta_fare scaled by household income,
+     * beta_fare * (income / reference_income) ^ (-elasticity), per
+     * dhaka_mode_parameters.json's "income_scaling".
+     *
+     * Hoque's model pools one beta_fare over everyone, implying a single VTTS
+     * of 197.6 BDT/h - 4.2x the implied wage for the Tk 10-20k bracket and
+     * 0.49x for the top one. Scaling cost sensitivity with income redistributes
+     * that VTTS towards what each traveller can plausibly pay; it leaves the
+     * value unchanged for the median-income household, so the transfer is
+     * preserved at the centre of the distribution.
+     *
+     * Reads the ordinal `householdIncome` person attribute written by
+     * dhaka/income.py (0-8, -1 = income not stated). Unknown or out-of-range
+     * classes get the unscaled beta_fare.
+     *
+     * Deliberately the ONLY accessor for beta_fare: an unscaled getter would
+     * let a new estimator silently skip the income scaling.
+     */
+    public double getBetaFare(Person person) {
+        Object attribute = person.getAttributes().getAttribute("householdIncome");
+        if (!(attribute instanceof Number)) {
+            return betaFare;
+        }
+        int incomeClass = (int) Math.round(((Number) attribute).doubleValue());
+        if (incomeClass < 0 || incomeClass >= fareScaleByIncomeClass.length) {
+            return betaFare;
+        }
+        return betaFare * fareScaleByIncomeClass[incomeClass];
     }
 
     public double getAsc(String mode) {

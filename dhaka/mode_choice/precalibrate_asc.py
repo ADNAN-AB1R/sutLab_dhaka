@@ -6,7 +6,7 @@ import numpy as np
 import pandas as pd
 import geopandas as gpd
 
-from dhaka.synthesis.population.mode_choice import compute_fare_bdt
+from dhaka.synthesis.population.mode_choice import compute_fare_bdt, income_fare_scale
 
 """
 OFFLINE pre-calibration of dhaka_mode_parameters.json's ASCs, run once before
@@ -72,12 +72,26 @@ TOLERANCE = 1e-5
 
 
 def load_trips(trips_path):
+    """Distance, target mode and household income class per trip. Income comes
+    from the persons/households CSVs written next to the GeoPackage (person ->
+    household -> `income`, which dhaka/income.py sets to the ordinal class)."""
     df = gpd.read_file(trips_path)
+
+    output_dir = os.path.dirname(trips_path)
+    prefix = os.path.basename(trips_path)[:-len("trips.gpkg")]
+    df_persons = pd.read_csv(os.path.join(output_dir, prefix + "persons.csv"), sep = ";",
+                             usecols = ["person_id", "household_id"])
+    df_households = pd.read_csv(os.path.join(output_dir, prefix + "households.csv"), sep = ";",
+                                usecols = ["household_id", "income"])
+    df = df.merge(df_persons, on = "person_id", how = "left").merge(
+        df_households, on = "household_id", how = "left")
+
     distance_m = df.geometry.length.to_numpy(dtype = float)
     donor_mode = df["mode_hts_donor"].to_numpy()
+    income_class = df["income"].to_numpy(dtype = float)
 
     usable = np.isfinite(distance_m)
-    return distance_m[usable], donor_mode[usable]
+    return distance_m[usable], donor_mode[usable], income_class[usable]
 
 
 def compute_target_shares(modes, donor_mode):
@@ -87,9 +101,10 @@ def compute_target_shares(modes, donor_mode):
     return shares.reindex(modes).fillna(0.0).to_numpy()
 
 
-def build_utility_base(model, modes, distance_m):
+def build_utility_base(model, modes, distance_m, income_class):
     """The part of the utility that does NOT move while the ASCs are being
-    calibrated - computed once, not once per round."""
+    calibrated - computed once, not once per round. Cost sensitivity is scaled
+    per trip by household income, identically to the Java estimator."""
     time_minutes = np.column_stack([
         distance_m / 1000.0 / model["fallback_speed_kmh"][mode] * 60.0 for mode in modes
     ])
@@ -98,8 +113,9 @@ def build_utility_base(model, modes, distance_m):
             compute_fare_bdt(mode, distance_m, model["fare_assumptions"]), distance_m.shape)
         for mode in modes
     ])
+    fare_scale = income_fare_scale(model, income_class)
     return (model["beta_duration_per_minute"] * time_minutes
-            + model["beta_fare_per_bdt"] * fare_bdt)
+            + model["beta_fare_per_bdt"] * fare_scale[:, None] * fare_bdt)
 
 
 def logit_shares(utility_base, asc):
@@ -117,12 +133,12 @@ def precalibrate(trips_path, dry_run):
     reference_mode = model["reference_mode"]
     reference_index = modes.index(reference_mode)
 
-    distance_m, donor_mode = load_trips(trips_path)
-    print("Loaded %d trips with usable distances (median %.0f m)" % (
-        len(distance_m), np.median(distance_m)))
+    distance_m, donor_mode, income_class = load_trips(trips_path)
+    print("Loaded %d trips with usable distances (median %.0f m); income class resolved for %.1f%%" % (
+        len(distance_m), np.median(distance_m), 100 * np.mean(np.nan_to_num(income_class, nan = -1) >= 0)))
 
     target = compute_target_shares(modes, donor_mode)
-    utility_base = build_utility_base(model, modes, distance_m)
+    utility_base = build_utility_base(model, modes, distance_m, income_class)
 
     asc_start = np.array([0.0 if m == reference_mode else model["asc"][m] for m in modes])
     share_start = logit_shares(utility_base, asc_start)
